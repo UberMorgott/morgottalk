@@ -1,23 +1,24 @@
 #!/usr/bin/env python3
 """
-Transcribation - Cross-platform speech transcription & translation tool.
-Uses faster-whisper for local, offline transcription with GPU acceleration.
+Transcribation - Push-to-talk voice transcription & translation.
+Hold a key to record from mic, release to transcribe. Powered by faster-whisper.
 """
 
 import argparse
-import json
 import os
+import platform
+import shutil
+import subprocess
 import sys
 import signal
 import tempfile
+import threading
 import time
 import wave
-from pathlib import Path
 
 # ── Colors ──────────────────────────────────────────────────────────────────
 
 class C:
-    """ANSI color codes."""
     RESET   = "\033[0m"
     BOLD    = "\033[1m"
     DIM     = "\033[2m"
@@ -25,152 +26,298 @@ class C:
     GREEN   = "\033[92m"
     YELLOW  = "\033[93m"
     BLUE    = "\033[94m"
-    MAGENTA = "\033[95m"
     CYAN    = "\033[96m"
-    WHITE   = "\033[97m"
 
     @staticmethod
     def disable():
-        for attr in ["RESET","BOLD","DIM","RED","GREEN","YELLOW","BLUE","MAGENTA","CYAN","WHITE"]:
-            setattr(C, attr, "")
+        for a in ["RESET","BOLD","DIM","RED","GREEN","YELLOW","BLUE","CYAN"]:
+            setattr(C, a, "")
 
-# Disable colors if not a terminal or on Windows without ANSI support
 if not sys.stdout.isatty():
     C.disable()
 elif sys.platform == "win32":
     try:
         import ctypes
-        kernel32 = ctypes.windll.kernel32
-        kernel32.SetConsoleMode(kernel32.GetStdHandle(-11), 7)
+        ctypes.windll.kernel32.SetConsoleMode(ctypes.windll.kernel32.GetStdHandle(-11), 7)
     except Exception:
         C.disable()
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
+def info(msg):    print(f"  {C.BLUE}i{C.RESET}  {msg}")
+def success(msg): print(f"  {C.GREEN}+{C.RESET}  {msg}")
+def warn(msg):    print(f"  {C.YELLOW}!{C.RESET}  {msg}")
+def error(msg):   print(f"  {C.RED}x{C.RESET}  {msg}")
+def die(msg):     error(msg); sys.exit(1)
+
 def banner():
     print(f"""
-{C.CYAN}{C.BOLD}╔══════════════════════════════════════════╗
-║         🎤  Transcribation  🎤           ║
-║   Speech transcription & translation     ║
-╚══════════════════════════════════════════╝{C.RESET}
+{C.CYAN}{C.BOLD}  ╔══════════════════════════════════════╗
+  ║       Transcribation                 ║
+  ║   Push-to-talk voice transcription   ║
+  ╚══════════════════════════════════════╝{C.RESET}
 """)
 
-def info(msg):
-    print(f"  {C.BLUE}ℹ{C.RESET}  {msg}")
-
-def success(msg):
-    print(f"  {C.GREEN}✓{C.RESET}  {msg}")
-
-def warn(msg):
-    print(f"  {C.YELLOW}⚠{C.RESET}  {msg}")
-
-def error(msg):
-    print(f"  {C.RED}✗{C.RESET}  {msg}")
-
-def die(msg):
-    error(msg)
-    sys.exit(1)
-
 def pick(prompt, options, default=0):
-    """Interactive single-choice menu. Returns index."""
+    """Simple numbered menu."""
     print(f"\n  {C.BOLD}{prompt}{C.RESET}")
     for i, (label, desc) in enumerate(options):
-        marker = f"{C.CYAN}›{C.RESET}" if i == default else " "
-        num = f"{C.DIM}[{i+1}]{C.RESET}"
-        print(f"  {marker} {num} {C.BOLD}{label}{C.RESET} {C.DIM}- {desc}{C.RESET}")
-
+        marker = f"{C.CYAN}>{C.RESET}" if i == default else " "
+        print(f"  {marker} {C.DIM}[{i+1}]{C.RESET} {C.BOLD}{label}{C.RESET} {C.DIM}- {desc}{C.RESET}")
     while True:
         try:
-            raw = input(f"\n  {C.CYAN}>{C.RESET} Choose [1-{len(options)}] (default {default+1}): ").strip()
+            raw = input(f"\n  {C.CYAN}>{C.RESET} [{default+1}]: ").strip()
             if not raw:
                 return default
-            choice = int(raw) - 1
-            if 0 <= choice < len(options):
-                return choice
+            n = int(raw) - 1
+            if 0 <= n < len(options):
+                return n
         except (ValueError, EOFError):
             pass
-        print(f"  {C.RED}Invalid choice, try again{C.RESET}")
 
-# ── Whisper wrapper ─────────────────────────────────────────────────────────
+# ── Clipboard ───────────────────────────────────────────────────────────────
+
+def copy_to_clipboard(text):
+    """Copy text to system clipboard. Silent fail if unavailable."""
+    try:
+        if sys.platform == "darwin":
+            subprocess.run(["pbcopy"], input=text.encode(), check=True)
+            return True
+        elif sys.platform == "win32":
+            subprocess.run(["clip.exe"], input=text.encode(), check=True)
+            return True
+        else:
+            # Linux: try wl-copy (Wayland) then xclip (X11)
+            if shutil.which("wl-copy"):
+                subprocess.run(["wl-copy", text], check=True)
+                return True
+            elif shutil.which("xclip"):
+                subprocess.run(["xclip", "-selection", "clipboard"], input=text.encode(), check=True)
+                return True
+            elif shutil.which("xsel"):
+                subprocess.run(["xsel", "--clipboard", "--input"], input=text.encode(), check=True)
+                return True
+    except Exception:
+        pass
+    return False
+
+# ── Key detection (cross-platform) ──────────────────────────────────────────
+
+def _setup_raw_input():
+    """Setup raw terminal input. Returns cleanup function."""
+    if sys.platform == "win32":
+        return lambda: None  # msvcrt doesn't need setup
+
+    import termios, tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    tty.setcbreak(fd)  # cbreak mode: char-by-char, signals still work
+    return lambda: termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+def _key_available():
+    """Check if a key is available without blocking."""
+    if sys.platform == "win32":
+        import msvcrt
+        return msvcrt.kbhit()
+    else:
+        import select
+        return select.select([sys.stdin], [], [], 0)[0] != []
+
+def _read_key():
+    """Read a single key (blocking)."""
+    if sys.platform == "win32":
+        import msvcrt
+        return msvcrt.getwch()
+    else:
+        return sys.stdin.read(1)
+
+def _drain_keys():
+    """Drain any buffered key-repeat events."""
+    while _key_available():
+        _read_key()
+
+# ── Recording ───────────────────────────────────────────────────────────────
+
+def record_push_to_talk():
+    """Hold-to-record: hold any key, release to stop. Returns temp WAV path."""
+    try:
+        import sounddevice as sd
+        import numpy as np
+    except ImportError:
+        die("sounddevice/numpy not installed. Run the install script.")
+
+    sample_rate = 16000
+    frames = []
+    recording = True
+
+    def audio_callback(indata, frame_count, time_info, status):
+        if recording:
+            frames.append(indata.copy())
+
+    stream = sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32",
+                            callback=audio_callback)
+    cleanup = _setup_raw_input()
+
+    try:
+        # Wait for key press to start
+        print(f"  {C.YELLOW}>> Press and hold any key to record...{C.RESET}", flush=True)
+        _read_key()
+        _drain_keys()
+
+        # Start recording
+        stream.start()
+        start_time = time.time()
+        print(f"\r  {C.RED}>> RECORDING  ", end="", flush=True)
+
+        # Record while key is held (key-repeat sends events)
+        # Stop when no key event comes for a short timeout
+        last_key_time = time.time()
+        while True:
+            if _key_available():
+                _read_key()
+                last_key_time = time.time()
+
+            elapsed = time.time() - start_time
+            # Show timer
+            print(f"\r  {C.RED}>> RECORDING  {elapsed:.1f}s{C.RESET}  ", end="", flush=True)
+
+            # If no key for 0.25s, consider released
+            if time.time() - last_key_time > 0.25:
+                break
+
+            time.sleep(0.02)
+
+        stream.stop()
+        recording = False
+        elapsed = time.time() - start_time
+        print(f"\r  {C.GREEN}>> Recorded {elapsed:.1f}s{C.RESET}              ")
+
+    finally:
+        cleanup()
+        stream.close()
+
+    if not frames:
+        return None
+
+    import numpy as np
+    audio = np.concatenate(frames, axis=0)
+    if len(audio) / sample_rate < 0.3:
+        return None  # Too short
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    with wave.open(tmp.name, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes((audio * 32767).astype(np.int16).tobytes())
+
+    return tmp.name
+
+def record_toggle():
+    """Press Enter to start, Enter to stop. Fallback mode. Returns temp WAV path."""
+    try:
+        import sounddevice as sd
+        import numpy as np
+    except ImportError:
+        die("sounddevice/numpy not installed. Run the install script.")
+
+    sample_rate = 16000
+    frames = []
+    recording = True
+
+    def audio_callback(indata, frame_count, time_info, status):
+        if recording:
+            frames.append(indata.copy())
+
+    print(f"  {C.YELLOW}>> Press Enter to START recording{C.RESET}", flush=True)
+    input()
+
+    stream = sd.InputStream(samplerate=sample_rate, channels=1, dtype="float32",
+                            callback=audio_callback)
+    stream.start()
+    start_time = time.time()
+
+    # Show timer in background
+    stop_flag = threading.Event()
+
+    def show_timer():
+        while not stop_flag.is_set():
+            e = time.time() - start_time
+            print(f"\r  {C.RED}>> RECORDING  {e:.1f}s{C.RESET}  ", end="", flush=True)
+            time.sleep(0.1)
+
+    timer_thread = threading.Thread(target=show_timer, daemon=True)
+    timer_thread.start()
+
+    print(f"\r  {C.YELLOW}>> Press Enter to STOP{C.RESET}              ", flush=True)
+    input()
+
+    stop_flag.set()
+    stream.stop()
+    recording = False
+    stream.close()
+
+    elapsed = time.time() - start_time
+    print(f"\r  {C.GREEN}>> Recorded {elapsed:.1f}s{C.RESET}              ")
+
+    if not frames:
+        return None
+
+    import numpy as np
+    audio = np.concatenate(frames, axis=0)
+    if len(audio) / sample_rate < 0.3:
+        return None
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    with wave.open(tmp.name, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes((audio * 32767).astype(np.int16).tobytes())
+
+    return tmp.name
+
+# ── Whisper ─────────────────────────────────────────────────────────────────
 
 MODELS = [
-    ("tiny",     "~75 MB,  fastest,  lowest quality"),
+    ("tiny",     "~75 MB,  fastest,  lower quality"),
     ("base",     "~150 MB, fast,     decent quality"),
     ("small",    "~500 MB, balanced, good quality"),
     ("medium",   "~1.5 GB, slower,   great quality"),
     ("large-v3", "~3 GB,   slowest,  best quality"),
 ]
 
-LANGUAGES = {
-    "auto":  "Auto-detect",
-    "en":    "English",
-    "ru":    "Russian",
-    "es":    "Spanish",
-    "fr":    "French",
-    "de":    "German",
-    "zh":    "Chinese",
-    "ja":    "Japanese",
-    "ko":    "Korean",
-    "pt":    "Portuguese",
-    "it":    "Italian",
-    "nl":    "Dutch",
-    "pl":    "Polish",
-    "uk":    "Ukrainian",
-    "ar":    "Arabic",
-    "hi":    "Hindi",
-    "tr":    "Turkish",
-    "sv":    "Swedish",
-    "cs":    "Czech",
-    "vi":    "Vietnamese",
-    "th":    "Thai",
-}
-
 def detect_device():
-    """Detect best compute device."""
     try:
-        import torch
-        if torch.cuda.is_available():
-            gpu_name = torch.cuda.get_device_name(0)
-            return "cuda", f"CUDA ({gpu_name})"
-    except ImportError:
-        pass
-
-    try:
-        from faster_whisper.utils import get_assets_path
         import ctranslate2
         if "cuda" in ctranslate2.get_supported_compute_types("cuda"):
             return "cuda", "CUDA"
     except Exception:
         pass
-
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda", f"CUDA ({torch.cuda.get_device_name(0)})"
+    except ImportError:
+        pass
     return "cpu", "CPU"
 
 def load_model(model_name, device):
-    """Load faster-whisper model."""
     try:
         from faster_whisper import WhisperModel
     except ImportError:
-        die("faster-whisper not installed. Run the install script or: pip install faster-whisper")
+        die("faster-whisper not installed. Run the install script.")
 
     compute_type = "float16" if device == "cuda" else "int8"
-    info(f"Loading model {C.BOLD}{model_name}{C.RESET} on {C.BOLD}{device}{C.RESET} ({compute_type})...")
-
+    info(f"Loading model {C.BOLD}{model_name}{C.RESET} ({device}, {compute_type})...")
     model = WhisperModel(model_name, device=device, compute_type=compute_type)
-    success("Model loaded")
+    success("Model ready")
     return model
 
-def transcribe_audio(model, audio_path, language=None, translate=False):
-    """Transcribe audio file, return segments."""
+def transcribe(model, audio_path, language=None, translate=False):
+    """Transcribe audio, return text string."""
     task = "translate" if translate else "transcribe"
     lang = None if language == "auto" else language
-
-    info(f"Transcribing: {C.BOLD}{audio_path}{C.RESET}")
-    if translate:
-        info(f"Mode: {C.YELLOW}translate to English{C.RESET}")
-    if lang:
-        info(f"Language: {C.BOLD}{lang}{C.RESET}")
-    else:
-        info("Language: auto-detect")
 
     segments, seg_info = model.transcribe(
         audio_path,
@@ -181,364 +328,161 @@ def transcribe_audio(model, audio_path, language=None, translate=False):
         vad_parameters=dict(min_silence_duration_ms=500),
     )
 
-    detected_lang = seg_info.language
-    lang_prob = seg_info.language_probability
-    info(f"Detected language: {C.BOLD}{detected_lang}{C.RESET} ({lang_prob:.0%})")
-
-    results = []
+    parts = []
     for seg in segments:
-        results.append({
-            "start": seg.start,
-            "end": seg.end,
-            "text": seg.text.strip(),
-        })
-        # Print in real-time
-        ts = f"{C.DIM}[{_fmt_time(seg.start)} → {_fmt_time(seg.end)}]{C.RESET}"
-        print(f"  {ts} {seg.text.strip()}")
+        parts.append(seg.text.strip())
 
-    return results, detected_lang
+    text = " ".join(parts)
+    return text, seg_info.language
 
-# ── Microphone recording ────────────────────────────────────────────────────
+# ── Main loop ───────────────────────────────────────────────────────────────
 
-def record_from_mic(duration=None):
-    """Record audio from microphone. Press Ctrl+C or Enter to stop."""
-    try:
-        import sounddevice as sd
-        import numpy as np
-    except ImportError:
-        die("sounddevice not installed. Run: pip install sounddevice numpy")
+def run_loop(model, language, translate, mode):
+    """Main push-to-talk loop."""
+    print(f"  {C.DIM}{'─' * 40}{C.RESET}")
+    if translate:
+        info(f"Mode: transcribe + {C.YELLOW}translate to English{C.RESET}")
+    if language != "auto":
+        info(f"Language: {C.BOLD}{language}{C.RESET}")
+    print(f"  {C.DIM}Ctrl+C to exit{C.RESET}")
+    print(f"  {C.DIM}{'─' * 40}{C.RESET}\n")
 
-    sample_rate = 16000
-    channels = 1
-    frames = []
-    recording = True
-
-    def callback(indata, frame_count, time_info, status):
-        if recording:
-            frames.append(indata.copy())
-
-    info(f"Recording from microphone ({C.BOLD}{sample_rate}Hz{C.RESET})...")
-    if duration:
-        info(f"Duration: {duration}s")
-    else:
-        print(f"  {C.YELLOW}Press Enter to stop recording...{C.RESET}")
-
-    stream = sd.InputStream(
-        samplerate=sample_rate,
-        channels=channels,
-        dtype="float32",
-        callback=callback,
-    )
-
-    with stream:
-        if duration:
-            # Show progress
-            start_t = time.time()
-            while time.time() - start_t < duration:
-                elapsed = time.time() - start_t
-                bar_len = 30
-                filled = int(bar_len * elapsed / duration)
-                bar = f"{'█' * filled}{'░' * (bar_len - filled)}"
-                print(f"\r  {C.CYAN}🎙 {bar} {elapsed:.1f}s / {duration}s{C.RESET}", end="", flush=True)
-                time.sleep(0.1)
-            print()
+    while True:
+        # Record
+        if mode == "hold":
+            wav_path = record_push_to_talk()
         else:
-            try:
-                input()
-            except (EOFError, KeyboardInterrupt):
-                pass
+            wav_path = record_toggle()
 
-    recording = False
+        if not wav_path:
+            warn("Too short or no audio, try again")
+            continue
 
-    if not frames:
-        die("No audio recorded")
-
-    import numpy as np
-    audio_data = np.concatenate(frames, axis=0)
-
-    # Save to temp WAV file
-    tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    with wave.open(tmp.name, "wb") as wf:
-        wf.setnchannels(channels)
-        wf.setsampwidth(2)  # 16-bit
-        wf.setframerate(sample_rate)
-        wf.writeframes((audio_data * 32767).astype(np.int16).tobytes())
-
-    success(f"Recorded {len(audio_data)/sample_rate:.1f}s of audio")
-    return tmp.name
-
-# ── Output formats ──────────────────────────────────────────────────────────
-
-def _fmt_time(seconds):
-    """Format seconds as HH:MM:SS."""
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    if h > 0:
-        return f"{h}:{m:02d}:{s:02d}"
-    return f"{m}:{s:02d}"
-
-def _fmt_srt_time(seconds):
-    """Format seconds as SRT timestamp: HH:MM:SS,mmm"""
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int((seconds % 1) * 1000)
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
-
-def _fmt_vtt_time(seconds):
-    """Format seconds as VTT timestamp: HH:MM:SS.mmm"""
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = int(seconds % 60)
-    ms = int((seconds % 1) * 1000)
-    return f"{h:02d}:{m:02d}:{s:02d}.{ms:03d}"
-
-def save_output(segments, output_path, fmt):
-    """Save transcription in specified format."""
-    if fmt == "txt":
-        text = "\n".join(seg["text"] for seg in segments)
-        Path(output_path).write_text(text, encoding="utf-8")
-
-    elif fmt == "srt":
-        lines = []
-        for i, seg in enumerate(segments, 1):
-            lines.append(str(i))
-            lines.append(f"{_fmt_srt_time(seg['start'])} --> {_fmt_srt_time(seg['end'])}")
-            lines.append(seg["text"])
-            lines.append("")
-        Path(output_path).write_text("\n".join(lines), encoding="utf-8")
-
-    elif fmt == "vtt":
-        lines = ["WEBVTT", ""]
-        for seg in segments:
-            lines.append(f"{_fmt_vtt_time(seg['start'])} --> {_fmt_vtt_time(seg['end'])}")
-            lines.append(seg["text"])
-            lines.append("")
-        Path(output_path).write_text("\n".join(lines), encoding="utf-8")
-
-    elif fmt == "json":
-        Path(output_path).write_text(
-            json.dumps(segments, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    else:
-        die(f"Unknown format: {fmt}")
-
-    success(f"Saved: {C.BOLD}{output_path}{C.RESET} ({fmt})")
-
-# ── Interactive mode ────────────────────────────────────────────────────────
-
-def interactive_mode():
-    """Run interactive transcription session."""
-    banner()
-
-    # Choose mode
-    mode = pick("What do you want to do?", [
-        ("Transcribe a file",     "Transcribe audio/video file to text"),
-        ("Record from microphone","Record voice and transcribe in real-time"),
-    ])
-
-    # Choose model
-    model_idx = pick("Select Whisper model:", MODELS, default=2)
-    model_name = MODELS[model_idx][0]
-
-    # Choose language
-    lang_items = list(LANGUAGES.items())
-    lang_idx = pick("Source language:", [(v, k) for k, v in lang_items], default=0)
-    language = lang_items[lang_idx][0]
-
-    # Translation?
-    translate = False
-    tr = pick("Translate to English?", [
-        ("No",  "Keep original language"),
-        ("Yes", "Translate everything to English"),
-    ], default=0)
-    translate = tr == 1
-
-    # Output format
-    fmt_idx = pick("Output format:", [
-        ("txt",  "Plain text"),
-        ("srt",  "SubRip subtitles"),
-        ("vtt",  "WebVTT subtitles"),
-        ("json", "JSON with timestamps"),
-    ], default=0)
-    fmt = ["txt", "srt", "vtt", "json"][fmt_idx]
-
-    # Load model
-    device, device_name = detect_device()
-    info(f"Device: {C.BOLD}{device_name}{C.RESET}")
-    model = load_model(model_name, device)
-
-    # Process
-    if mode == 0:
-        # File transcription
-        while True:
-            file_path = input(f"\n  {C.CYAN}>{C.RESET} Enter file path: ").strip().strip("'\"")
-            if os.path.isfile(file_path):
-                break
-            error("File not found, try again")
-
-        segments, detected = transcribe_audio(model, file_path, language, translate)
-
-        if segments:
-            base = Path(file_path).stem
-            out_path = f"{base}.{fmt}"
-            save_output(segments, out_path, fmt)
-
-            # Also show full text
-            print(f"\n  {C.BOLD}{'─' * 50}{C.RESET}")
-            full_text = " ".join(seg["text"] for seg in segments)
-            print(f"  {full_text}")
-            print(f"  {C.BOLD}{'─' * 50}{C.RESET}")
-        else:
-            warn("No speech detected")
-
-    else:
-        # Microphone recording
-        dur_raw = input(f"\n  {C.CYAN}>{C.RESET} Duration in seconds (Enter for manual stop): ").strip()
-        duration = float(dur_raw) if dur_raw else None
-
-        tmp_path = record_from_mic(duration)
         try:
-            segments, detected = transcribe_audio(model, tmp_path, language, translate)
+            # Transcribe
+            print(f"  {C.DIM}Transcribing...{C.RESET}", end="", flush=True)
+            text, detected_lang = transcribe(model, wav_path, language, translate)
+            # Clear the "Transcribing..." line
+            print(f"\r                      \r", end="")
 
-            if segments:
-                out_path = f"recording_{int(time.time())}.{fmt}"
-                save_output(segments, out_path, fmt)
-
-                print(f"\n  {C.BOLD}{'─' * 50}{C.RESET}")
-                full_text = " ".join(seg["text"] for seg in segments)
-                print(f"  {full_text}")
-                print(f"  {C.BOLD}{'─' * 50}{C.RESET}")
-            else:
+            if not text.strip():
                 warn("No speech detected")
+                continue
+
+            # Show result
+            print(f"\n  {C.BOLD}{C.GREEN}{text}{C.RESET}")
+
+            # Copy to clipboard
+            if copy_to_clipboard(text):
+                print(f"  {C.DIM}(copied to clipboard){C.RESET}")
+
+            print()
+
         finally:
-            os.unlink(tmp_path)
-
-    # Ask to continue
-    print()
-    again = pick("Continue?", [
-        ("New transcription", "Start another transcription"),
-        ("Exit",              "Quit the program"),
-    ], default=1)
-
-    if again == 0:
-        interactive_mode()
+            if os.path.exists(wav_path):
+                os.unlink(wav_path)
 
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
-def build_parser():
+def main():
+    signal.signal(signal.SIGINT, lambda *_: (print(f"\n\n  {C.DIM}Bye!{C.RESET}\n"), sys.exit(0)))
+
     parser = argparse.ArgumentParser(
         prog="transcribe",
-        description="Transcribation - Speech transcription & translation tool",
+        description="Push-to-talk voice transcription & translation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=f"""
 {C.BOLD}Examples:{C.RESET}
-  transcribe                          # Interactive mode
-  transcribe audio.mp3                # Transcribe a file
-  transcribe --mic                    # Record from microphone
-  transcribe --mic --duration 30      # Record 30 seconds
-  transcribe --translate video.mp4    # Transcribe + translate to English
-  transcribe -m large-v3 audio.wav    # Use large model
-  transcribe -l ru -f srt lecture.mp3 # Russian, SRT output
+  transcribe                 # Interactive setup, then push-to-talk
+  transcribe -m large-v3     # Use large model
+  transcribe -t              # Translate to English
+  transcribe -l ru           # Force Russian as source language
+  transcribe --mode toggle   # Press Enter to start/stop instead of hold
 
-{C.BOLD}Models:{C.RESET}  tiny | base | small | medium | large-v3
-{C.BOLD}Formats:{C.RESET} txt | srt | vtt | json
+{C.BOLD}Models:{C.RESET} tiny | base | small | medium | large-v3
         """,
     )
 
-    parser.add_argument("file", nargs="?", help="Audio/video file to transcribe")
-    parser.add_argument("--mic", action="store_true", help="Record from microphone")
-    parser.add_argument("--duration", "-d", type=float, help="Recording duration in seconds (with --mic)")
-    parser.add_argument("--model", "-m", default="small", choices=[m[0] for m in MODELS],
-                        help="Whisper model size (default: small)")
-    parser.add_argument("--language", "-l", default="auto", choices=list(LANGUAGES.keys()),
-                        help="Source language code (default: auto-detect)")
+    parser.add_argument("--model", "-m", default=None, choices=[m[0] for m in MODELS],
+                        help="Whisper model (default: interactive choice)")
+    parser.add_argument("--language", "-l", default=None,
+                        help="Source language code, e.g. 'ru', 'en' (default: auto)")
     parser.add_argument("--translate", "-t", action="store_true",
                         help="Translate to English")
-    parser.add_argument("--format", "-f", default="txt", choices=["txt","srt","vtt","json"],
-                        help="Output format (default: txt)")
-    parser.add_argument("--output", "-o", help="Output file path (default: auto)")
-    parser.add_argument("--device", choices=["auto","cuda","cpu"], default="auto",
+    parser.add_argument("--mode", default=None, choices=["hold", "toggle"],
+                        help="Recording mode: hold key or toggle start/stop (default: hold)")
+    parser.add_argument("--device", choices=["auto", "cuda", "cpu"], default="auto",
                         help="Compute device (default: auto)")
-    parser.add_argument("--list-languages", action="store_true", help="Show all supported languages")
+    parser.add_argument("--list-languages", action="store_true",
+                        help="Show supported language codes")
 
-    return parser
-
-def main():
-    # Handle Ctrl+C gracefully
-    signal.signal(signal.SIGINT, lambda *_: (print(f"\n  {C.DIM}Interrupted{C.RESET}"), sys.exit(0)))
-
-    parser = build_parser()
     args = parser.parse_args()
 
-    # List languages
     if args.list_languages:
-        print(f"\n  {C.BOLD}Supported languages:{C.RESET}")
-        for code, name in LANGUAGES.items():
-            if code != "auto":
-                print(f"    {C.CYAN}{code:5s}{C.RESET} {name}")
-        print(f"\n  {C.DIM}Whisper supports 99 languages total.")
-        print(f"  Use any ISO 639-1 code (e.g., 'fi' for Finnish).{C.RESET}\n")
+        print(f"\n  {C.BOLD}Common language codes:{C.RESET}")
+        for code, name in [
+            ("auto","Auto-detect"), ("en","English"), ("ru","Russian"), ("es","Spanish"),
+            ("fr","French"), ("de","German"), ("zh","Chinese"), ("ja","Japanese"),
+            ("ko","Korean"), ("pt","Portuguese"), ("it","Italian"), ("uk","Ukrainian"),
+            ("ar","Arabic"), ("hi","Hindi"), ("tr","Turkish"), ("pl","Polish"),
+        ]:
+            print(f"    {C.CYAN}{code:5s}{C.RESET} {name}")
+        print(f"\n  {C.DIM}Whisper supports 99 languages. Use any ISO 639-1 code.{C.RESET}\n")
         return
 
-    # No args → interactive mode
-    if not args.file and not args.mic:
-        interactive_mode()
-        return
+    banner()
 
-    # Determine device
+    # Interactive setup if flags not provided
+    model_name = args.model
+    if not model_name:
+        idx = pick("Select Whisper model:", MODELS, default=2)
+        model_name = MODELS[idx][0]
+
+    language = args.language or "auto"
+    if args.language is None:
+        lang_options = [
+            ("Auto-detect", "Let Whisper detect the language"),
+            ("ru — Russian", ""), ("en — English", ""),
+            ("de — German", ""), ("es — Spanish", ""),
+            ("fr — French", ""), ("zh — Chinese", ""),
+            ("ja — Japanese", ""), ("uk — Ukrainian", ""),
+        ]
+        lang_codes = ["auto", "ru", "en", "de", "es", "fr", "zh", "ja", "uk"]
+        idx = pick("Source language:", lang_options, default=0)
+        language = lang_codes[idx]
+
+    translate = args.translate
+    if not translate:
+        idx = pick("Translate to English?", [
+            ("No",  "Keep original language"),
+            ("Yes", "Translate everything to English"),
+        ], default=0)
+        translate = idx == 1
+
+    mode = args.mode
+    if not mode:
+        idx = pick("Recording mode:", [
+            ("Hold key", "Hold any key while speaking, release to transcribe"),
+            ("Toggle",   "Press Enter to start, Enter to stop"),
+        ], default=0)
+        mode = "hold" if idx == 0 else "toggle"
+
+    # Device
     if args.device == "auto":
         device, device_name = detect_device()
     elif args.device == "cuda":
-        device, device_name = "cuda", "CUDA (forced)"
+        device, device_name = "cuda", "CUDA"
     else:
-        device, device_name = "cpu", "CPU (forced)"
+        device, device_name = "cpu", "CPU"
 
-    banner()
     info(f"Device: {C.BOLD}{device_name}{C.RESET}")
 
     # Load model
-    model = load_model(args.model, device)
+    model = load_model(model_name, device)
+    print()
 
-    # Get audio
-    tmp_path = None
-    if args.mic:
-        tmp_path = record_from_mic(args.duration)
-        audio_path = tmp_path
-    else:
-        audio_path = args.file
-        if not os.path.isfile(audio_path):
-            die(f"File not found: {audio_path}")
-
-    try:
-        # Transcribe
-        segments, detected = transcribe_audio(model, audio_path, args.language, args.translate)
-
-        if not segments:
-            warn("No speech detected in audio")
-            return
-
-        # Output
-        if args.output:
-            out_path = args.output
-        elif args.mic:
-            out_path = f"recording_{int(time.time())}.{args.format}"
-        else:
-            out_path = f"{Path(audio_path).stem}.{args.format}"
-
-        save_output(segments, out_path, args.format)
-
-        # Print summary
-        print(f"\n  {C.BOLD}{'─' * 50}{C.RESET}")
-        full_text = " ".join(seg["text"] for seg in segments)
-        print(f"  {full_text}")
-        print(f"  {C.BOLD}{'─' * 50}{C.RESET}\n")
-
-    finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    # Run
+    run_loop(model, language, translate, mode)
 
 if __name__ == "__main__":
     main()
