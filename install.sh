@@ -222,6 +222,11 @@ install_packages() {
     # Base packages
     pip install --quiet faster-whisper sounddevice numpy
 
+    # evdev for keyboard hot-plug support (Linux only)
+    if [[ "$OS" == "linux" ]]; then
+        pip install --quiet evdev 2>/dev/null || true
+    fi
+
     # CUDA support if GPU available
     if [ "$GPU_AVAILABLE" = true ]; then
         info "Installing CUDA support for GPU acceleration..."
@@ -245,10 +250,20 @@ install_script() {
     # Create wrapper script
     mkdir -p "$BIN_DIR"
 
-    cat > "$BIN_DIR/transcribe" << 'WRAPPER'
+    # Detect Python version in venv for library path
+    VENV_PY_VER=$("$INSTALL_DIR/venv/bin/python3" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+
+    cat > "$BIN_DIR/transcribe" << WRAPPER
 #!/usr/bin/env bash
-source "$HOME/.transcribation/venv/bin/activate"
-python "$HOME/.transcribation/transcribe.py" "$@"
+source "\$HOME/.transcribation/venv/bin/activate"
+
+# Add pip-installed NVIDIA CUDA libraries to search path
+NVIDIA_LIBS="\$HOME/.transcribation/venv/lib/python${VENV_PY_VER}/site-packages/nvidia"
+for sub in cublas/lib cudnn/lib; do
+    [ -d "\$NVIDIA_LIBS/\$sub" ] && export LD_LIBRARY_PATH="\$NVIDIA_LIBS/\$sub\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
+done
+
+python "\$HOME/.transcribation/transcribe.py" "\$@"
 WRAPPER
 
     chmod +x "$BIN_DIR/transcribe"
@@ -310,6 +325,14 @@ main() {
     setup_venv
     install_packages
     install_script
+
+    # Hint about input group for keyboard hot-plug (Linux only)
+    if [[ "$OS" == "linux" ]] && ! groups "$USER" 2>/dev/null | grep -q '\binput\b'; then
+        echo ""
+        info "For keyboard hot-plug support (push-to-talk with any keyboard):"
+        echo -e "  ${DIM}    sudo usermod -aG input $USER  (then re-login)${RESET}"
+    fi
+
     predownload_model
 
     echo -e "
