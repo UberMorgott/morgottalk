@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<MsixPackagingToolTemplate
+    xmlns="http://schemas.microsoft.com/msix/packaging/msixpackagingtool/template/2022">
+    <Settings
+        AllowTelemetry="false"
+        ApplyACLsToPackageFiles="true"
+        GenerateCommandLineFile="true"
+        AllowPromptForPassword="false">
+    </Settings>
+    <Installer
+        Path="transcribation"
+        Arguments=""
+        InstallLocation="C:\Program Files\UberMorgott\Transcribation">
+    </Installer>
+    <PackageInformation
+        PackageName="Transcribation"
+        PackageDisplayName="Transcribation"
+        PublisherName="CN=UberMorgott"
+        PublisherDisplayName="UberMorgott"
+        Version="0.1.0.0"
+        PackageDescription="Push-to-talk voice transcription & translation">
+        <Capabilities>
+            <Capability Name="runFullTrust" />
+            
+        </Capabilities>
+        <Applications>
+            <Application
+                Id="com.ubermorgott.transcribation"
+                Description="Push-to-talk voice transcription & translation"
+                DisplayName="Transcribation"
+                ExecutableName="transcribation"
+                EntryPoint="Windows.FullTrustApplication">
+                
+            </Application>
+        </Applications>
+        <Resources>
+            <Resource Language="en-us" />
+        </Resources>
+        <Dependencies>
+            <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+        </Dependencies>
+        <Properties>
+            <Framework>false</Framework>
+            <DisplayName>Transcribation</DisplayName>
+            <PublisherDisplayName>UberMorgott</PublisherDisplayName>
+            <Description>Push-to-talk voice transcription & translation</Description>
+            <Logo>Assets\AppIcon.png</Logo>
+        </Properties>
+    </PackageInformation>
+    <SaveLocation PackagePath="transcribation.msix" />
+    <PackageIntegrity>
+        <CertificatePath></CertificatePath>
+    </PackageIntegrity>
+</MsixPackagingToolTemplate>

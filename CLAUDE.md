@@ -2,63 +2,73 @@
 
 ## Project Overview
 
-**Transcribation** - кросс-платформенный CLI-инструмент для транскрипции и перевода речи.
-Устанавливается одной командой из GitHub. Работает локально через faster-whisper.
+**Transcribation** — кросс-платформенное десктопное приложение push-to-talk для транскрипции и перевода голоса.
+Один портативный бинарник. Системный трей. Глобальный хоткей.
 
 ## Architecture
 
-- **transcribe.py** - единый Python-скрипт, точка входа
-- **install.sh** - установщик для Linux/macOS (curl one-liner)
-- **install.ps1** - установщик для Windows (irm one-liner)
-- Всё работает через **faster-whisper** (CTranslate2, быстрее оригинального Whisper)
-- Модели скачиваются автоматически при первом запуске
+- **Go + CGO** — бэкенд, единый бинарник
+- **Wails v3** — десктопный фреймворк (трей, окно, биндинги)
+- **Svelte + TypeScript + Tailwind** — фронтенд UI
+- **whisper.cpp** — STT движок (git submodule, статическая линковка)
+- **malgo (miniaudio)** — захват звука, 0 зависимостей
+- **golang.design/x/hotkey** — глобальные горячие клавиши
+- **golang.design/x/clipboard** — кросс-платформенный буфер обмена
 
 ## Tech Stack
 
-- **Python 3.9+** - основной язык
-- **faster-whisper** - движок транскрипции (Whisper на CTranslate2)
-- **sounddevice** - запись с микрофона
-- **rich** - красивый вывод в терминале
-- **ffmpeg** - обработка аудио/видео (внешняя зависимость)
+| Компонент | Технология |
+|-----------|-----------|
+| Бэкенд | Go 1.25+ CGO |
+| GUI | Wails v3 alpha |
+| Фронтенд | Svelte + TypeScript + Tailwind |
+| STT | whisper.cpp (Go bindings) |
+| Аудио | malgo (miniaudio) |
+| Хоткей | golang.design/x/hotkey |
+| CI/CD | GitHub Actions |
 
 ## Design Principles
 
-1. **Одна команда для установки** - пользователь копирует одну строку из README и всё работает
-2. **Кросс-платформенность** - Linux, macOS, Windows без изменений в основном коде
-3. **Локальная работа** - никаких API ключей, всё работает офлайн
-4. **Минимализм** - один файл, минимум зависимостей, никакого оверинжиниринга
-5. **Интерактивность** - красивые меню выбора в терминале при необходимости
-6. **GPU-ускорение** - автоматически использует CUDA если доступен
-
-## Conventions
-
-- Весь код в одном файле `transcribe.py` - не разбивать на модули
-- Установщики максимально автономные - определяют ОС и ставят всё сами
-- README содержит copy-paste команды для каждой ОС
-- Никаких внешних API или платных сервисов
-- Whisper translate task для перевода на английский (встроенная функция модели)
-- Логирование через print с цветами, не через logging module
+1. **Один бинарник** — скачал, запустил, работает
+2. **Кросс-платформенность** — Linux, macOS, Windows
+3. **Локальная работа** — никаких API, всё офлайн
+4. **Минимум зависимостей** — только webkit2gtk на Linux
+5. **Портативность** — модели скачиваются при первом запуске
 
 ## File Structure
 
 ```
 transcribation/
-├── CLAUDE.md           # Этот файл - конфиг для Claude Code
-├── README.md           # Документация с командами установки
-├── LICENSE             # MIT License
-├── install.sh          # Установщик Linux/macOS
-├── install.ps1         # Установщик Windows
-├── transcribe.py       # Главный скрипт
-├── requirements.txt    # Python зависимости
-└── .gitignore          # Git ignore
+├── main.go                     # Wails app entry point
+├── services/
+│   ├── transcription.go        # Recording → transcription → clipboard
+│   ├── settings.go             # Settings service for frontend
+│   ├── audio.go                # malgo audio capture
+│   ├── whisper.go              # whisper.cpp wrapper
+│   └── models.go               # Model downloading
+├── internal/
+│   ├── hotkey/                 # Global hotkey (platform-specific)
+│   ├── clipboard/              # Clipboard operations
+│   └── config/                 # JSON config persistence
+├── third_party/
+│   └── whisper.cpp/            # Git submodule
+├── frontend/
+│   ├── src/                    # Svelte + TypeScript
+│   └── package.json
+├── build/                      # Wails build configs
+├── scripts/
+│   └── build-whisper.sh        # Build libwhisper.a
+├── CLAUDE.md
+├── README.md
+├── go.mod
+└── Taskfile.yml
 ```
 
-## Key Features
+## Conventions
 
-- Транскрипция аудио/видео файлов
-- Запись с микрофона в реальном времени
-- Перевод речи на английский (Whisper translate)
-- Интерактивный выбор языка, модели, формата вывода
-- Форматы вывода: txt, srt, vtt, json
-- Размеры моделей: tiny, base, small, medium, large-v3
-- Авто-определение GPU (CUDA) / CPU
+- Go код — стандартный стиль (gofmt)
+- Фронтенд — Svelte компоненты, TypeScript strict
+- Конфиг — JSON в стандартной директории ОС
+- Модели — GGML формат, скачиваются из Hugging Face
+- Не использовать устаревшие библиотеки
+- Платформо-зависимый код через build tags

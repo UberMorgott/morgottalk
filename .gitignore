@@ -1,20 +1,28 @@
-__pycache__/
-*.pyc
-*.pyo
-.env
-venv/
-.venv/
-*.egg-info/
-dist/
-build/
-*.wav
-*.mp3
-*.mp4
-*.txt
-!requirements.txt
-*.srt
-*.vtt
-*.json
-!package.json
+# Wails
+.task
+bin
+frontend/dist
+frontend/node_modules
+build/linux/appimage/build
+build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+
+# whisper.cpp build artifacts
+third_party/whisper.cpp/build/
+
+# Models
+models/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
 Thumbs.db
+
+# Go
+*.exe
+*.test
+*.out

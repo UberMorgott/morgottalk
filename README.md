@@ -1,105 +1,59 @@
-# Transcribation
+# Welcome to Your New Wails3 Project!
 
-Push-to-talk voice transcription in the terminal.
-Hold a key — speak — release — get text. With optional translation to English.
+Congratulations on generating your Wails3 application! This README will guide you through the next steps to get your project up and running.
 
-Works locally, offline, with GPU acceleration. Powered by [faster-whisper](https://github.com/SYSTRAN/faster-whisper).
+## Getting Started
 
-## Quick Install
+1. Navigate to your project directory in the terminal.
 
-### Linux / macOS
+2. To run your application in development mode, use the following command:
 
-```bash
-curl -sSL https://raw.githubusercontent.com/UberMorgott/transcribation/main/install.sh | bash
-```
+   ```
+   wails3 dev
+   ```
 
-### Windows (PowerShell)
+   This will start your application and enable hot-reloading for both frontend and backend changes.
 
-```powershell
-irm https://raw.githubusercontent.com/UberMorgott/transcribation/main/install.ps1 | iex
-```
+3. To build your application for production, use:
 
-The installer will:
-- Install Python and ffmpeg if missing
-- Set up an isolated environment in `~/.transcribation/`
-- Install all dependencies automatically
-- Set up the `transcribe` command
-- Optionally download the Whisper model
+   ```
+   wails3 build
+   ```
 
-## Usage
+   This will create a production-ready executable in the `build` directory.
 
-```bash
-transcribe
-```
+## Exploring Wails3 Features
 
-Interactive menu lets you pick model, language, translation, and recording mode.
-Then it enters a loop:
+Now that you have your project set up, it's time to explore the features that Wails3 offers:
 
-1. **Hold any key** while speaking
-2. **Release** — transcription happens
-3. **Result** appears in terminal + copied to clipboard
-4. Repeat. `Ctrl+C` to exit.
+1. **Check out the examples**: The best way to learn is by example. Visit the `examples` directory in the `v3/examples` directory to see various sample applications.
 
-### Quick start with flags
+2. **Run an example**: To run any of the examples, navigate to the example's directory and use:
 
-```bash
-transcribe -m small -l auto          # Small model, auto-detect language
-transcribe -t                        # Translate everything to English
-transcribe -m large-v3 --device cuda # Large model on GPU
-transcribe --mode toggle             # Press Enter to start/stop instead of hold
-```
+   ```
+   go run .
+   ```
 
-### All options
+   Note: Some examples may be under development during the alpha phase.
 
-| Flag | Short | Description |
-|------|-------|-------------|
-| `--model MODEL` | `-m` | Model: `tiny`, `base`, `small`, `medium`, `large-v3` |
-| `--language LANG` | `-l` | Source language code (`ru`, `en`, `auto`, etc.) |
-| `--translate` | `-t` | Translate to English |
-| `--mode MODE` | | `hold` (default) or `toggle` |
-| `--device DEVICE` | | `auto`, `cuda`, or `cpu` |
-| `--list-languages` | | Show all language codes |
+3. **Explore the documentation**: Visit the [Wails3 documentation](https://v3.wails.io/) for in-depth guides and API references.
 
-## Models
+4. **Join the community**: Have questions or want to share your progress? Join the [Wails Discord](https://discord.gg/JDdSxwjhGf) or visit the [Wails discussions on GitHub](https://github.com/wailsapp/wails/discussions).
 
-| Model | Size | Speed | Quality | VRAM |
-|-------|------|-------|---------|------|
-| tiny | ~75 MB | Fastest | Low | ~1 GB |
-| base | ~150 MB | Fast | OK | ~1 GB |
-| small | ~500 MB | Medium | Good | ~2 GB |
-| medium | ~1.5 GB | Slow | Great | ~5 GB |
-| large-v3 | ~3 GB | Slowest | Best | ~10 GB |
+## Project Structure
 
-Models download automatically on first use and cache in `~/.cache/huggingface/`.
+Take a moment to familiarize yourself with your project structure:
 
-## Translation
+- `frontend/`: Contains your frontend code (HTML, CSS, JavaScript/TypeScript)
+- `main.go`: The entry point of your Go backend
+- `app.go`: Define your application structure and methods here
+- `wails.json`: Configuration file for your Wails project
 
-Whisper has a built-in translate mode that converts any language to English.
-Speak in any of 99 supported languages — get English text output.
+## Next Steps
 
-```bash
-transcribe -t
-```
+1. Modify the frontend in the `frontend/` directory to create your desired UI.
+2. Add backend functionality in `main.go`.
+3. Use `wails3 dev` to see your changes in real-time.
+4. When ready, build your application with `wails3 build`.
 
-## Supported Languages
-
-`en` English, `ru` Russian, `es` Spanish, `fr` French, `de` German,
-`zh` Chinese, `ja` Japanese, `ko` Korean, `pt` Portuguese, `it` Italian,
-`uk` Ukrainian, `pl` Polish, `ar` Arabic, `hi` Hindi, `tr` Turkish
-
-Run `transcribe --list-languages` for more.
-
-## Uninstall
-
-```bash
-rm -rf ~/.transcribation ~/.local/bin/transcribe
-```
-
-Windows:
-```powershell
-Remove-Item -Recurse "$env:USERPROFILE\.transcribation", "$env:USERPROFILE\.local\bin\transcribe.cmd", "$env:USERPROFILE\.local\bin\transcribe.ps1"
-```
-
-## License
-
-MIT
+Happy coding with Wails3! If you encounter any issues or have questions, don't hesitate to consult the documentation or reach out to the Wails community.

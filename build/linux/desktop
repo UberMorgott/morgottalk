@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=Transcribation
+Comment=Push-to-talk voice transcription & translation
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/transcribation %u
+Terminal=false
+Type=Application
+Icon=transcribation
+Categories=Utility;
+StartupWMClass=transcribation
+
+ 
