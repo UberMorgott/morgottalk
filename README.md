@@ -1,59 +1,135 @@
-# Welcome to Your New Wails3 Project!
+# MorgoTTalk
 
-Congratulations on generating your Wails3 application! This README will guide you through the next steps to get your project up and running.
+Push-to-talk voice transcription for your desktop. One portable binary, fully offline, GPU accelerated.
 
-## Getting Started
+Press a hotkey, speak, release — your speech appears as text in any application. No cloud, no API keys, no internet required.
 
-1. Navigate to your project directory in the terminal.
+## Features
 
-2. To run your application in development mode, use the following command:
+- **Push-to-talk** — hold or toggle a global hotkey to record, text is typed automatically on release
+- **Preset system** — multiple profiles with different models, hotkeys, languages, and input modes
+- **GPU acceleration** — CUDA (NVIDIA), Vulkan, Metal (macOS), ROCm (AMD), OpenCL — auto-detected with one-click install
+- **Offline** — everything runs locally via [whisper.cpp](https://github.com/ggerganov/whisper.cpp), no data leaves your machine
+- **Cross-platform** — Linux, macOS, Windows
+- **Text output** — types directly into any focused app, or pastes via clipboard
+- **Auto language** — detects your keyboard layout and selects transcription language automatically
+- **Model manager** — download whisper models from HuggingFace directly in the app
+- **History** — searchable log of all transcriptions
+- **9 UI languages** — English, Russian, German, Spanish, French, Chinese, Japanese, Portuguese, Korean
+- **System tray** — minimize to tray, keep listening in the background
+- **Dark & light themes**
 
+## Quick Start
+
+### Linux
+
+1. Install dependencies:
+   ```bash
+   # Arch / CachyOS
+   sudo pacman -S webkit2gtk-4.1 gtk3
+
+   # Ubuntu / Debian
+   sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev
+
+   # Fedora
+   sudo dnf install webkit2gtk4.1-devel gtk3-devel
    ```
-   wails3 dev
+
+2. Download the binary from [Releases](https://github.com/UberMorgott/morgottalk/releases), make it executable and run:
+   ```bash
+   chmod +x morgottalk-linux-amd64
+   ./morgottalk-linux-amd64
    ```
 
-   This will start your application and enable hot-reloading for both frontend and backend changes.
+3. On first launch, open Settings and download a model (recommended: `base-q5_1` for fast, `large-v3-turbo-q8_0` for accuracy).
 
-3. To build your application for production, use:
+4. Create a preset, set a hotkey, enable it — done.
 
-   ```
-   wails3 build
-   ```
+### macOS / Windows
 
-   This will create a production-ready executable in the `build` directory.
+Pre-built binaries will be available in future releases. For now, build from source (see below).
 
-## Exploring Wails3 Features
+## GPU Acceleration
 
-Now that you have your project set up, it's time to explore the features that Wails3 offers:
+MorgoTTalk automatically detects available GPU backends. Open **Settings** to see which backends are available on your system:
 
-1. **Check out the examples**: The best way to learn is by example. Visit the `examples` directory in the `v3/examples` directory to see various sample applications.
+| Backend | Hardware | Status |
+|---------|----------|--------|
+| **CPU** | Any | Always available |
+| **CUDA** | NVIDIA GPU | Requires [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) |
+| **Vulkan** | Any modern GPU | Requires Vulkan runtime |
+| **Metal** | Apple GPU | Built into macOS |
+| **ROCm** | AMD GPU | Requires [ROCm runtime](https://rocm.docs.amd.com/) |
+| **OpenCL** | Any GPU | Requires OpenCL runtime |
 
-2. **Run an example**: To run any of the examples, navigate to the example's directory and use:
+Grey backends can be installed with one click from the Settings panel.
 
-   ```
-   go run .
-   ```
+> **Note**: The pre-built Linux binary includes CUDA support. For other GPU backends, build from source with the appropriate tags.
 
-   Note: Some examples may be under development during the alpha phase.
+## Build from Source
 
-3. **Explore the documentation**: Visit the [Wails3 documentation](https://v3.wails.io/) for in-depth guides and API references.
+### Prerequisites
 
-4. **Join the community**: Have questions or want to share your progress? Join the [Wails Discord](https://discord.gg/JDdSxwjhGf) or visit the [Wails discussions on GitHub](https://github.com/wailsapp/wails/discussions).
+- Go 1.22+
+- Node.js 18+
+- GCC / Clang (C/C++ compiler)
+- [Wails v3](https://v3.wails.io/) CLI: `go install github.com/wailsapp/wails/v3/cmd/wails3@latest`
+- cmake
+- **Linux**: `webkit2gtk-4.1`, `gtk3` development packages
+- **macOS**: Xcode Command Line Tools
+- **Windows**: MSVC or MinGW, WebView2 runtime
 
-## Project Structure
+### Build
 
-Take a moment to familiarize yourself with your project structure:
+```bash
+# 1. Clone with submodules
+git clone --recurse-submodules https://github.com/UberMorgott/morgottalk.git
+cd morgottalk
 
-- `frontend/`: Contains your frontend code (HTML, CSS, JavaScript/TypeScript)
-- `main.go`: The entry point of your Go backend
-- `app.go`: Define your application structure and methods here
-- `wails.json`: Configuration file for your Wails project
+# 2. Build whisper.cpp (one-time)
+cmake -S third_party/whisper.cpp -B third_party/whisper.cpp/build_go \
+  -DBUILD_SHARED_LIBS=OFF
+cmake --build third_party/whisper.cpp/build_go
 
-## Next Steps
+# For NVIDIA GPU acceleration, add:
+#   -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES="60;70;75;80;86;89;90;100;120"
+# For Vulkan: -DGGML_VULKAN=ON
 
-1. Modify the frontend in the `frontend/` directory to create your desired UI.
-2. Add backend functionality in `main.go`.
-3. Use `wails3 dev` to see your changes in real-time.
-4. When ready, build your application with `wails3 build`.
+# 3. Build frontend
+cd frontend && npm install && npm run build && cd ..
 
-Happy coding with Wails3! If you encounter any issues or have questions, don't hesitate to consult the documentation or reach out to the Wails community.
+# 4. Generate bindings
+wails3 generate bindings
+
+# 5. Build binary
+CGO_ENABLED=1 go build -o morgottalk .
+
+# With GPU tags:
+# CGO_ENABLED=1 go build -tags cuda -o morgottalk .
+# CGO_ENABLED=1 go build -tags vulkan -o morgottalk .
+# CGO_ENABLED=1 go build -tags "cuda vulkan" -o morgottalk .
+```
+
+## How It Works
+
+1. You assign a global hotkey to a preset (e.g., `Ctrl`, `Ctrl+Shift+F1`, etc.)
+2. **Hold mode**: hold the hotkey to record, release to transcribe
+3. **Toggle mode**: press once to start, press again to stop
+4. Audio is captured at 16kHz mono, chunked into 25-second segments
+5. whisper.cpp transcribes each chunk (on GPU if available)
+6. Result is typed into the currently focused application via system text input
+
+## Text Input Methods
+
+| Platform | Method |
+|----------|--------|
+| Linux (Wayland) | ydotool, wtype (fallback) |
+| Linux (X11) | xdotool |
+| macOS | osascript (AppleScript) |
+| Windows | SendKeys (PowerShell) |
+
+If direct typing fails, text is copied to clipboard automatically.
+
+## License
+
+MIT

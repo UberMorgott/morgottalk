@@ -14,7 +14,7 @@ import (
 	"github.com/UberMorgott/transcribation/services"
 )
 
-const AppVersion = "0.3.0"
+const AppVersion = "1.0.0"
 
 //go:embed all:frontend/dist
 var assets embed.FS
