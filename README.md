@@ -19,54 +19,71 @@ Press a hotkey, speak, release — your speech appears as text in any applicatio
 - **System tray** — minimize to tray, keep listening in the background
 - **Dark & light themes**
 
-## Quick Start
+## Install
 
-### Linux
-
-1. Install dependencies:
-   ```bash
-   # Arch / CachyOS
-   sudo pacman -S webkit2gtk-4.1 gtk3
-
-   # Ubuntu / Debian
-   sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev
-
-   # Fedora
-   sudo dnf install webkit2gtk4.1-devel gtk3-devel
-   ```
-
-2. Download and run (always gets the latest release):
-   ```bash
-   curl -Lo morgottalk https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-linux-amd64
-   chmod +x morgottalk
-   ./morgottalk
-   ```
-
-   Or download manually from [Releases](https://github.com/UberMorgott/morgottalk/releases).
-
-3. On first launch, open Settings and download a model (recommended: `base-q5_1` for fast, `large-v3-turbo-q8_0` for accuracy).
-
-4. Create a preset, set a hotkey, enable it — done.
-
-### macOS (Apple Silicon)
+### One-liner (Linux / macOS)
 
 ```bash
-curl -Lo morgottalk https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-macos-arm64
-chmod +x morgottalk
-./morgottalk
+curl -fsSL https://raw.githubusercontent.com/UberMorgott/morgottalk/main/install.sh | bash
 ```
 
-Or download manually from [Releases](https://github.com/UberMorgott/morgottalk/releases).
+This will automatically:
+- Install system dependencies (Linux: webkit2gtk, gtk3)
+- Download the latest release for your platform
+- Install to `/usr/local/bin` (may ask for password)
+- Create a desktop entry (Linux)
 
-### Windows
+After install, just run `morgottalk` from anywhere.
 
-PowerShell:
+### Manual download
+
+Download the binary for your platform from [Releases](https://github.com/UberMorgott/morgottalk/releases/latest):
+
+| Platform | File |
+|----------|------|
+| Linux x86_64 | `morgottalk-linux-amd64` |
+| macOS arm64 | `morgottalk-macos-arm64` |
+| Windows x86_64 | `morgottalk-windows-amd64.exe` |
+
+<details>
+<summary>Linux / macOS</summary>
+
+```bash
+# Linux
+curl -Lo morgottalk https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-linux-amd64
+chmod +x morgottalk && ./morgottalk
+
+# macOS
+curl -Lo morgottalk https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-macos-arm64
+chmod +x morgottalk && ./morgottalk
+```
+
+Linux dependencies (if not using install script):
+```bash
+# Arch / CachyOS
+sudo pacman -S webkit2gtk-4.1 gtk3
+
+# Ubuntu / Debian
+sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev
+
+# Fedora
+sudo dnf install webkit2gtk4.1-devel gtk3-devel
+```
+</details>
+
+<details>
+<summary>Windows (PowerShell)</summary>
+
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-windows-amd64.exe" -OutFile "morgottalk.exe"
 .\morgottalk.exe
 ```
+</details>
 
-Or download `morgottalk-windows-amd64.exe` from [Releases](https://github.com/UberMorgott/morgottalk/releases).
+### First launch
+
+1. Open **Settings** and download a model (recommended: `base-q5_1` for fast, `large-v3-turbo-q8_0` for accuracy).
+2. Create a preset, set a hotkey, enable it — done.
 
 ## GPU Acceleration
 
