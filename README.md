@@ -35,19 +35,38 @@ Press a hotkey, speak, release — your speech appears as text in any applicatio
    sudo dnf install webkit2gtk4.1-devel gtk3-devel
    ```
 
-2. Download the binary from [Releases](https://github.com/UberMorgott/morgottalk/releases), make it executable and run:
+2. Download and run (always gets the latest release):
    ```bash
-   chmod +x morgottalk-linux-amd64
-   ./morgottalk-linux-amd64
+   curl -Lo morgottalk https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-linux-amd64
+   chmod +x morgottalk
+   ./morgottalk
    ```
+
+   Or download manually from [Releases](https://github.com/UberMorgott/morgottalk/releases).
 
 3. On first launch, open Settings and download a model (recommended: `base-q5_1` for fast, `large-v3-turbo-q8_0` for accuracy).
 
 4. Create a preset, set a hotkey, enable it — done.
 
-### macOS / Windows
+### macOS (Apple Silicon)
 
-Pre-built binaries will be available in future releases. For now, build from source (see below).
+```bash
+curl -Lo morgottalk https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-macos-arm64
+chmod +x morgottalk
+./morgottalk
+```
+
+Or download manually from [Releases](https://github.com/UberMorgott/morgottalk/releases).
+
+### Windows
+
+PowerShell:
+```powershell
+Invoke-WebRequest -Uri "https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-windows-amd64.exe" -OutFile "morgottalk.exe"
+.\morgottalk.exe
+```
+
+Or download `morgottalk-windows-amd64.exe` from [Releases](https://github.com/UberMorgott/morgottalk/releases).
 
 ## GPU Acceleration
 
