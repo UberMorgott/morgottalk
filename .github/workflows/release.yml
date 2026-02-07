@@ -76,6 +76,16 @@ jobs:
             -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build third_party/whisper.cpp/build_go -j4
 
+      - name: Fix library names for MinGW
+        run: |
+          find third_party/whisper.cpp/build_go -name "*.a" | while read f; do
+            dir=$(dirname "$f")
+            base=$(basename "$f")
+            if [[ ! "$base" == lib* ]]; then
+              mv "$f" "$dir/lib$base"
+            fi
+          done
+
       - name: Build frontend
         run: cd frontend && npm ci && npm run build
 
@@ -105,10 +115,12 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build whisper.cpp (with Metal)
+      - name: Build whisper.cpp (with Metal + Accelerate)
         run: |
           cmake -S third_party/whisper.cpp -B third_party/whisper.cpp/build_go \
-            -DBUILD_SHARED_LIBS=OFF -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DGGML_METAL=ON -DGGML_METAL_EMBED_LIBRARY=ON \
+            -DGGML_BLAS=ON -DGGML_BLAS_VENDOR=Apple \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build third_party/whisper.cpp/build_go -j$(sysctl -n hw.ncpu)
 

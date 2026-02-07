@@ -8,5 +8,6 @@ package services
 // #cgo LDFLAGS: -lwhisper -lggml -lggml-base -lggml-cpu -lm
 // #cgo linux LDFLAGS: -lstdc++ -fopenmp
 // #cgo windows LDFLAGS: -lstdc++ -fopenmp
-// #cgo darwin LDFLAGS: -lc++
+// #cgo darwin LDFLAGS: -lc++ -framework Accelerate
+// #cgo darwin LDFLAGS: -L${SRCDIR}/../third_party/whisper.cpp/build_go/ggml/src/ggml-blas -lggml-blas
 import "C"
