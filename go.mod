@@ -2,7 +2,12 @@ module github.com/UberMorgott/transcribation
 
 go 1.25
 
-require github.com/wailsapp/wails/v3 v3.0.0-alpha.67
+require (
+	github.com/gen2brain/malgo v0.11.24
+	github.com/google/uuid v1.6.0
+	github.com/robotn/gohook v0.42.3
+	github.com/wailsapp/wails/v3 v3.0.0-alpha.67
+)
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
@@ -14,6 +19,7 @@ require (
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/ebitengine/purego v0.9.1 // indirect
+	github.com/emersion/go-autostart v0.0.0-20250403115856-34830d6457d2 // indirect
 	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.7.0 // indirect
@@ -21,7 +27,6 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/jchv/go-winloader v0.0.0-20250406163304-c1995be93bd1 // indirect
 	github.com/kevinburke/ssh_config v1.4.0 // indirect
@@ -37,6 +42,7 @@ require (
 	github.com/samber/lo v1.52.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
+	github.com/vcaesar/keycode v0.10.1 // indirect
 	github.com/wailsapp/go-webview2 v1.0.23 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	golang.org/x/crypto v0.47.0 // indirect

@@ -2,51 +2,163 @@ package main
 
 import (
 	"embed"
-	_ "embed"
 	"log"
+	"os"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 
+	"github.com/UberMorgott/transcribation/internal/config"
+	"github.com/UberMorgott/transcribation/internal/i18n"
 	"github.com/UberMorgott/transcribation/services"
 )
+
+const AppVersion = "0.3.0"
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed build/appicon.png
+var appIcon []byte
+
 func main() {
-	transcriptionService := services.NewTranscriptionService()
+	historyService := services.NewHistoryService()
+	modelService := services.NewModelService()
+	presetService := services.NewPresetService(historyService, modelService)
 	settingsService := services.NewSettingsService()
 
+	go func() {
+		if err := presetService.Init(); err != nil {
+			log.Printf("WARNING: preset service init failed: %v", err)
+		}
+	}()
+
+	installDesktopEntry(appIcon)
+
 	app := application.New(application.Options{
-		Name:        "Transcribation",
+		Name:        "MorgoTTalk",
 		Description: "Push-to-talk voice transcription & translation",
+		Icon:        appIcon,
 		Services: []application.Service{
-			application.NewService(transcriptionService),
+			application.NewService(presetService),
 			application.NewService(settingsService),
+			application.NewService(historyService),
+			application.NewService(modelService),
 		},
 		Assets: application.AssetOptions{
 			Handler: application.AssetFileServerFS(assets),
+		},
+		Linux: application.LinuxOptions{
+			ProgramName: "morgottalk",
 		},
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
 	})
 
-	app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Title:  "Transcribation",
-		Width:  480,
-		Height: 640,
-		Mac: application.MacWindow{
-			InvisibleTitleBarHeight: 50,
-			Backdrop:                application.MacBackdropTranslucent,
-			TitleBar:                application.MacTitleBarHiddenInset,
-		},
-		BackgroundColour: application.NewRGB(18, 18, 24),
+	mainWindow := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "",
+		Width:            500,
+		Height:           720,
+		MinWidth:         400,
+		MinHeight:        560,
+		BackgroundColour: application.NewRGB(13, 11, 8),
 		URL:              "/",
+	})
+
+	// --- Helper: actually quit the app ---
+	doQuit := func() {
+		go presetService.Shutdown()
+		time.AfterFunc(2*time.Second, func() {
+			log.Println("Force exit: shutdown timeout")
+			os.Exit(0)
+		})
+		app.Quit()
+	}
+
+	// --- UI language for Go-side strings ---
+	cfg, _ := config.Load()
+	lang := cfg.UILang
+	if lang == "" {
+		lang = "en"
+	}
+
+	// --- System tray ---
+	trayMenu := app.NewMenu()
+	trayMenu.Add(i18n.T(lang, "tray_show")).OnClick(func(_ *application.Context) {
+		mainWindow.Show()
+		mainWindow.Focus()
+	})
+	trayMenu.AddSeparator()
+	trayMenu.Add(i18n.T(lang, "tray_quit")).OnClick(func(_ *application.Context) {
+		doQuit()
+	})
+
+	tray := app.SystemTray.New()
+	tray.SetIcon(appIcon)
+	tray.SetMenu(trayMenu)
+	tray.SetTooltip("MorgoTTalk")
+	tray.OnClick(func() {
+		mainWindow.Show()
+		mainWindow.Focus()
+	})
+	tray.OnDoubleClick(func() {
+		mainWindow.Show()
+		mainWindow.Focus()
+	})
+
+	// --- Close-to-tray via RegisterHook ---
+	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		cfg, _ := config.Load()
+		action := cfg.CloseAction
+		uiLang := cfg.UILang
+		if uiLang == "" {
+			uiLang = "en"
+		}
+
+		switch action {
+		case "quit":
+			doQuit()
+			return
+		case "tray":
+			e.Cancel()
+			mainWindow.Hide()
+			return
+		default:
+			// First time — ask user
+			e.Cancel()
+			go func() {
+				dialog := app.Dialog.Question()
+				dialog.SetTitle(i18n.T(uiLang, "close_dialog_title"))
+				dialog.SetMessage(i18n.T(uiLang, "close_dialog_message"))
+
+				trayBtn := dialog.AddButton(i18n.T(uiLang, "close_minimize"))
+				trayBtn.SetAsDefault()
+				trayBtn.OnClick(func() {
+					cfg, _ := config.Load()
+					cfg.CloseAction = "tray"
+					_ = config.Save(cfg)
+					mainWindow.Hide()
+				})
+
+				quitBtn := dialog.AddButton(i18n.T(uiLang, "close_quit"))
+				quitBtn.OnClick(func() {
+					cfg, _ := config.Load()
+					cfg.CloseAction = "quit"
+					_ = config.Save(cfg)
+					doQuit()
+				})
+
+				dialog.Show()
+			}()
+		}
 	})
 
 	err := app.Run()
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	presetService.Shutdown()
 }

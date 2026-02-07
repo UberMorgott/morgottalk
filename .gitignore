@@ -1,16 +1,22 @@
-# Wails
-.task
-bin
-frontend/dist
-frontend/node_modules
-build/linux/appimage/build
+# Build artifacts
+bin/
+frontend/dist/
+frontend/node_modules/
+build/linux/appimage/build/
 build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
+.task
 
 # whisper.cpp build artifacts
-third_party/whisper.cpp/build/
+third_party/whisper.cpp/build*/
 
-# Models
+# Models (downloaded at runtime)
 models/
+*.bin
+*.gguf
+
+# Runtime data
+config.json
+history.json
 
 # IDE
 .idea/
@@ -26,3 +32,15 @@ Thumbs.db
 *.exe
 *.test
 *.out
+
+# AI / Claude / Copilot
+CLAUDE.md
+.claude/
+.aider*
+.cursor/
+.copilot/
+.github/copilot*
+
+# Dev scripts
+kill.sh
+run.sh

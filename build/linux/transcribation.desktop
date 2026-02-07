@@ -1,10 +1,11 @@
 [Desktop Entry]
 Type=Application
-Name=transcribation
-Exec=transcribation
-Icon=transcribation
-Categories=Development;
+Name=MorgoTTalk
+Exec=morgottalk
+Icon=morgottalk
+Categories=AudioVideo;Audio;Utility;
 Terminal=false
-Keywords=wails
+Keywords=transcription;voice;whisper;dictation;
 Version=1.0
 StartupNotify=false
+Comment=Push-to-talk voice transcription

@@ -1,1 +1,72 @@
 @import "tailwindcss";
+
+/* ── Theme variables ── */
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --bg-page: #0d0b08;
+  --bg-card: #252018;
+  --bg-input: #181410;
+  --bg-overlay: rgba(0, 0, 0, 0.7);
+  --text-primary: #ffffff;
+  --text-secondary: #e0c9a8;
+  --text-tertiary: #d4a574;
+  --text-muted: #b8956a;
+  --accent: #f97316;
+  --accent-dim: rgba(249, 115, 22, 0.12);
+  --accent-red: #dc2626;
+  --border-color: rgba(249, 115, 22, 0.3);
+  --border-hover: rgba(249, 115, 22, 0.5);
+  --border-active: rgba(249, 115, 22, 0.7);
+  --border-subtle: rgba(249, 115, 22, 0.15);
+  --toggle-bg: #2a2014;
+  --toggle-border: #3d2e1a;
+  --pill-bg: #201810;
+  --pill-border: #3d2e1a;
+  --sep-color: rgba(212, 165, 116, 0.6);
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg-page: #f5f0eb;
+  --bg-card: #faf8f5;
+  --bg-input: #ffffff;
+  --bg-overlay: rgba(0, 0, 0, 0.3);
+  --text-primary: #1a1208;
+  --text-secondary: #3d2e1e;
+  --text-tertiary: #5c4a36;
+  --text-muted: #8a7560;
+  --accent: #ea580c;
+  --accent-dim: rgba(234, 88, 12, 0.1);
+  --accent-red: #dc2626;
+  --border-color: rgba(180, 120, 50, 0.3);
+  --border-hover: rgba(180, 120, 50, 0.5);
+  --border-active: rgba(180, 120, 50, 0.7);
+  --border-subtle: rgba(180, 120, 50, 0.15);
+  --toggle-bg: #e3d8c9;
+  --toggle-border: #c4b49e;
+  --pill-bg: #f1e8db;
+  --pill-border: #c4b49e;
+  --sep-color: rgba(140, 100, 60, 0.5);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: var(--bg-page);
+  color: var(--text-secondary);
+  font-size: 16px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.selectable {
+  user-select: text;
+  -webkit-user-select: text;
+}
