@@ -166,6 +166,50 @@ CGO_ENABLED=1 go build -o morgottalk .
 
 If direct typing fails, text is copied to clipboard automatically.
 
+## Uninstall
+
+<details>
+<summary>Linux</summary>
+
+```bash
+# Remove binary
+sudo rm /usr/local/bin/morgottalk
+
+# Remove desktop entry
+rm ~/.local/share/applications/morgottalk.desktop
+
+# Remove config and history
+rm -rf ~/.config/transcribation
+
+# Remove downloaded models
+rm -rf ~/.local/share/transcribation
+```
+</details>
+
+<details>
+<summary>macOS</summary>
+
+```bash
+# Remove binary
+sudo rm /usr/local/bin/morgottalk
+
+# Remove config, history, and models
+rm -rf ~/Library/Application\ Support/transcribation
+```
+</details>
+
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+# Remove binary (wherever you saved it)
+Remove-Item morgottalk.exe
+
+# Remove config, history, and models
+Remove-Item -Recurse "$env:APPDATA\transcribation"
+```
+</details>
+
 ## License
 
 MIT
