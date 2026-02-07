@@ -46,28 +46,37 @@ Download the binary for your platform from [Releases](https://github.com/UberMor
 | Windows x86_64 | `morgottalk-windows-amd64.exe` |
 
 <details>
-<summary>Linux / macOS</summary>
+<summary>Linux</summary>
 
 ```bash
-# Linux
 curl -Lo morgottalk https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-linux-amd64
-chmod +x morgottalk && ./morgottalk
-
-# macOS
-curl -Lo morgottalk https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-macos-arm64
 chmod +x morgottalk && ./morgottalk
 ```
 
-Linux dependencies (if not using install script):
+Dependencies (if not using install script):
+
+Arch / CachyOS:
 ```bash
-# Arch / CachyOS
 sudo pacman -S webkit2gtk-4.1 gtk3
+```
 
-# Ubuntu / Debian
+Ubuntu / Debian:
+```bash
 sudo apt install libwebkit2gtk-4.1-dev libgtk-3-dev
+```
 
-# Fedora
+Fedora:
+```bash
 sudo dnf install webkit2gtk4.1-devel gtk3-devel
+```
+</details>
+
+<details>
+<summary>macOS</summary>
+
+```bash
+curl -Lo morgottalk https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-macos-arm64
+chmod +x morgottalk && ./morgottalk
 ```
 </details>
 
@@ -76,6 +85,8 @@ sudo dnf install webkit2gtk4.1-devel gtk3-devel
 
 ```powershell
 Invoke-WebRequest -Uri "https://github.com/UberMorgott/morgottalk/releases/latest/download/morgottalk-windows-amd64.exe" -OutFile "morgottalk.exe"
+```
+```powershell
 .\morgottalk.exe
 ```
 </details>
