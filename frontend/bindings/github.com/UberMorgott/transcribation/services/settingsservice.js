@@ -46,6 +46,17 @@ export function GetMicrophones() {
 }
 
 /**
+ * GetSystemInfo returns diagnostic information about the system.
+ * @param {$models.ModelService | null} models
+ * @returns {$CancellablePromise<$models.SystemInfo>}
+ */
+export function GetSystemInfo(models) {
+    return $Call.ByID(2463947982, models).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType5($result);
+    }));
+}
+
+/**
  * InstallBackend installs the runtime for the given backend.
  * Returns "installed" if the package was installed directly,
  * "url" if a download page was opened in the browser.
@@ -79,3 +90,4 @@ const $$createType1 = $Create.Array($$createType0);
 const $$createType2 = $models.GlobalSettings.createFrom;
 const $$createType3 = $models.MicrophoneInfo.createFrom;
 const $$createType4 = $Create.Array($$createType3);
+const $$createType5 = $models.SystemInfo.createFrom;

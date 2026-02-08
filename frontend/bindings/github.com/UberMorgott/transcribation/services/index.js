@@ -19,5 +19,8 @@ export {
     LanguageInfo,
     MicrophoneInfo,
     ModelInfo,
-    PresetState
+    ModelService,
+    PresetState,
+    SystemInfo,
+    TranscriptionResult
 } from "./models.js";

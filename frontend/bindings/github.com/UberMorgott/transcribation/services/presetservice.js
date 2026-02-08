@@ -141,10 +141,12 @@ export function StartRecording(presetID) {
 /**
  * StopRecording stops capture and returns transcribed text.
  * @param {string} presetID
- * @returns {$CancellablePromise<string>}
+ * @returns {$CancellablePromise<$models.TranscriptionResult>}
  */
 export function StopRecording(presetID) {
-    return $Call.ByID(961787130, presetID);
+    return $Call.ByID(961787130, presetID).then(/** @type {($result: any) => any} */(($result) => {
+        return $$createType6($result);
+    }));
 }
 
 /**
@@ -163,3 +165,4 @@ const $$createType2 = $Create.Array($$createType1);
 const $$createType3 = $Create.Array($$createType0);
 const $$createType4 = $models.PresetState.createFrom;
 const $$createType5 = $Create.Array($$createType4);
+const $$createType6 = $models.TranscriptionResult.createFrom;

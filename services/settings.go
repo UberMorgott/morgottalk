@@ -152,3 +152,29 @@ func (s *SettingsService) GetMicrophones() ([]MicrophoneInfo, error) {
 	}
 	return result, nil
 }
+
+// SystemInfo provides diagnostic system information.
+type SystemInfo struct {
+	MicrophoneCount int           `json:"microphoneCount"`
+	ModelsCount     int           `json:"modelsCount"`
+	Backends        []BackendInfo `json:"backends"`
+}
+
+// GetSystemInfo returns diagnostic information about the system.
+func (s *SettingsService) GetSystemInfo(models *ModelService) SystemInfo {
+	mics, _ := s.GetMicrophones()
+	availableModels := models.GetAvailableModels()
+
+	downloadedCount := 0
+	for _, m := range availableModels {
+		if m.Downloaded {
+			downloadedCount++
+		}
+	}
+
+	return SystemInfo{
+		MicrophoneCount: len(mics),
+		ModelsCount:     downloadedCount,
+		Backends:        GetAllBackends(),
+	}
+}

@@ -19,6 +19,12 @@ type PresetState struct {
 	State string `json:"state"` // "idle", "recording", "processing"
 }
 
+// TranscriptionResult represents the result of a transcription operation.
+type TranscriptionResult struct {
+	Text  string `json:"text"`
+	Error string `json:"error"` // empty if successful
+}
+
 // PresetService manages presets, recording, and transcription.
 type PresetService struct {
 	mu       sync.Mutex
@@ -320,11 +326,11 @@ func (s *PresetService) StartRecording(presetID string) error {
 }
 
 // StopRecording stops capture and returns transcribed text.
-func (s *PresetService) StopRecording(presetID string) (string, error) {
+func (s *PresetService) StopRecording(presetID string) (TranscriptionResult, error) {
 	s.mu.Lock()
 	if s.states[presetID] != "recording" {
 		s.mu.Unlock()
-		return "", nil
+		return TranscriptionResult{}, nil
 	}
 
 	samples := s.audio.Stop()
@@ -333,7 +339,7 @@ func (s *PresetService) StopRecording(presetID string) (string, error) {
 	if p == nil {
 		s.states[presetID] = "idle"
 		s.mu.Unlock()
-		return "", fmt.Errorf("preset not found")
+		return TranscriptionResult{}, fmt.Errorf("preset not found")
 	}
 	preset := *p // copy
 	s.mu.Unlock()
@@ -346,7 +352,7 @@ func (s *PresetService) StopRecording(presetID string) (string, error) {
 		s.mu.Lock()
 		s.states[presetID] = "idle"
 		s.mu.Unlock()
-		return "", nil
+		return TranscriptionResult{}, nil
 	}
 
 	engine, err := s.getOrLoadEngine(&preset)
@@ -354,7 +360,7 @@ func (s *PresetService) StopRecording(presetID string) (string, error) {
 		s.mu.Lock()
 		s.states[presetID] = "idle"
 		s.mu.Unlock()
-		return "", fmt.Errorf("model load failed: %w", err)
+		return TranscriptionResult{Error: "Model load failed: " + err.Error()}, nil
 	}
 
 	lang := preset.Language
@@ -373,7 +379,10 @@ func (s *PresetService) StopRecording(presetID string) (string, error) {
 
 	text, err := engine.TranscribeLong(samples, lang, translate)
 	if err != nil {
-		log.Printf("Transcription error: %v", err)
+		s.mu.Lock()
+		s.states[presetID] = "idle"
+		s.mu.Unlock()
+		return TranscriptionResult{Error: "Transcription failed: " + err.Error()}, nil
 	}
 
 	result := strings.TrimSpace(text)
@@ -407,7 +416,7 @@ func (s *PresetService) StopRecording(presetID string) (string, error) {
 	s.lastText = result
 	s.mu.Unlock()
 
-	return result, nil
+	return TranscriptionResult{Text: result}, nil
 }
 
 // GetRecordingStates returns the state of all presets.

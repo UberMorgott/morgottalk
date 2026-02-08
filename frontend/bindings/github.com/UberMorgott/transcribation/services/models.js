@@ -61,6 +61,22 @@ export class BackendInfo {
              */
             this["installHint"] = "";
         }
+        if (!("unavailableReason" in $$source)) {
+            /**
+             * "" | "no_hardware" | "no_driver" | "no_runtime" | "not_compiled"
+             * @member
+             * @type {string}
+             */
+            this["unavailableReason"] = "";
+        }
+        if (!("gpuDetected" in $$source)) {
+            /**
+             * e.g. "NVIDIA RTX 5070 Ti", ""
+             * @member
+             * @type {string}
+             */
+            this["gpuDetected"] = "";
+        }
 
         Object.assign(this, $$source);
     }
@@ -292,6 +308,30 @@ export class ModelInfo {
 }
 
 /**
+ * ModelService manages whisper model files.
+ */
+export class ModelService {
+    /**
+     * Creates a new ModelService instance.
+     * @param {Partial<ModelService>} [$$source = {}] - The source object to create the ModelService.
+     */
+    constructor($$source = {}) {
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new ModelService instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {ModelService}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new ModelService(/** @type {Partial<ModelService>} */($$parsedSource));
+    }
+}
+
+/**
  * PresetState represents the recording state of a preset.
  */
 export class PresetState {
@@ -329,3 +369,95 @@ export class PresetState {
         return new PresetState(/** @type {Partial<PresetState>} */($$parsedSource));
     }
 }
+
+/**
+ * SystemInfo provides diagnostic system information.
+ */
+export class SystemInfo {
+    /**
+     * Creates a new SystemInfo instance.
+     * @param {Partial<SystemInfo>} [$$source = {}] - The source object to create the SystemInfo.
+     */
+    constructor($$source = {}) {
+        if (!("microphoneCount" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["microphoneCount"] = 0;
+        }
+        if (!("modelsCount" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["modelsCount"] = 0;
+        }
+        if (!("backends" in $$source)) {
+            /**
+             * @member
+             * @type {BackendInfo[]}
+             */
+            this["backends"] = [];
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new SystemInfo instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {SystemInfo}
+     */
+    static createFrom($$source = {}) {
+        const $$createField2_0 = $$createType1;
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        if ("backends" in $$parsedSource) {
+            $$parsedSource["backends"] = $$createField2_0($$parsedSource["backends"]);
+        }
+        return new SystemInfo(/** @type {Partial<SystemInfo>} */($$parsedSource));
+    }
+}
+
+/**
+ * TranscriptionResult represents the result of a transcription operation.
+ */
+export class TranscriptionResult {
+    /**
+     * Creates a new TranscriptionResult instance.
+     * @param {Partial<TranscriptionResult>} [$$source = {}] - The source object to create the TranscriptionResult.
+     */
+    constructor($$source = {}) {
+        if (!("text" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["text"] = "";
+        }
+        if (!("error" in $$source)) {
+            /**
+             * empty if successful
+             * @member
+             * @type {string}
+             */
+            this["error"] = "";
+        }
+
+        Object.assign(this, $$source);
+    }
+
+    /**
+     * Creates a new TranscriptionResult instance from a string or object.
+     * @param {any} [$$source = {}]
+     * @returns {TranscriptionResult}
+     */
+    static createFrom($$source = {}) {
+        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
+        return new TranscriptionResult(/** @type {Partial<TranscriptionResult>} */($$parsedSource));
+    }
+}
+
+// Private type creation functions
+const $$createType0 = BackendInfo.createFrom;
+const $$createType1 = $Create.Array($$createType0);

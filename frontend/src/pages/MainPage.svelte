@@ -3,7 +3,7 @@
   import Sortable from 'sortablejs';
   import { Events } from '@wailsio/runtime';
   import { GetPresets, CreatePreset, UpdatePreset, DeletePreset, SetPresetEnabled, StartRecording, StopRecording, GetRecordingStates, GetModelLanguages, ReorderPresets } from '../../bindings/github.com/UberMorgott/transcribation/services/presetservice.js';
-  import { GetGlobalSettings, GetMicrophones, GetAllBackends } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
+  import { GetGlobalSettings, GetMicrophones, GetAllBackends, GetSystemInfo } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
   import { GetAvailableModels, DownloadModel, DeleteModel, GetModelsDir, CancelDownload } from '../../bindings/github.com/UberMorgott/transcribation/services/modelservice.js';
   import { OpenHistoryWindow } from '../../bindings/github.com/UberMorgott/transcribation/services/historyservice.js';
   import { t } from '../lib/i18n';
@@ -12,6 +12,7 @@
   import PresetEditor from '../components/PresetEditor.svelte';
   import SettingsModal from '../components/SettingsModal.svelte';
   import ModelModal from '../components/ModelModal.svelte';
+  import Toast from '../components/Toast.svelte';
 
   type Preset = {
     id: string; name: string; modelName: string; keepModelLoaded: boolean;
@@ -52,8 +53,40 @@
   // Polling for state updates
   let stateInterval: ReturnType<typeof setInterval>;
 
+  // Diagnostic state
+  let diagnosticMessage = '';
+  let diagnosticType: 'error' | 'warning' | 'info' = 'info';
+
+  function showDiagnostic(type: 'error' | 'warning' | 'info', message: string) {
+    diagnosticType = type;
+    diagnosticMessage = message;
+  }
+
   onMount(async () => {
     await refreshAll();
+
+    // First-run diagnostics
+    try {
+      const sysInfo = await GetSystemInfo();
+
+      if (sysInfo.microphoneCount === 0) {
+        showDiagnostic('warning', t(uiLang, 'diag_no_microphone'));
+      } else if (sysInfo.modelsCount === 0 && presets.length > 0) {
+        showDiagnostic('warning', t(uiLang, 'diag_no_models'));
+      } else if (backend === 'cpu') {
+        const gpuBackend = sysInfo.backends.find(b =>
+          b.systemAvailable && b.id !== 'cpu' && b.id !== 'auto'
+        );
+        if (gpuBackend) {
+          const gpuName = gpuBackend.gpuDetected || gpuBackend.name;
+          showDiagnostic('info',
+            t(uiLang, 'diag_gpu_available').replace('{gpu}', gpuName)
+          );
+        }
+      }
+    } catch (e) {
+      console.error('Failed to get system info:', e);
+    }
 
     // Poll recording states
     stateInterval = setInterval(async () => {
@@ -302,6 +335,18 @@
     </div>
   </div>
 
+  <!-- Status bar with diagnostics -->
+  {#if diagnosticMessage}
+    <div class="status-bar">
+      <Toast
+        type={diagnosticType}
+        message={diagnosticMessage}
+        dismissible={true}
+        on:dismiss={() => diagnosticMessage = ''}
+      />
+    </div>
+  {/if}
+
   <!-- Centered content column -->
   <div class="content-col">
     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
@@ -415,6 +460,15 @@
     gap: 6px;
   }
   .topbar-spacer { flex: 1; }
+
+  /* -- Status bar with diagnostics -- */
+  .status-bar {
+    flex-shrink: 0;
+    padding: 0 clamp(16px, 4vw, 48px) 8px;
+    max-width: 680px;
+    margin: 0 auto;
+    width: 100%;
+  }
 
   .app-title {
     display: flex;
