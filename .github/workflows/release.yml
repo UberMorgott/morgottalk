@@ -30,13 +30,12 @@ jobs:
             libwebkit2gtk-4.1-dev libgtk-3-dev \
             libasound2-dev \
             libx11-dev libxtst-dev libx11-xcb-dev libxcb1-dev \
-            libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev \
-            cuda-toolkit-12-4
+            libxcb-xkb-dev libxkbcommon-dev libxkbcommon-x11-dev
 
-      - name: Build whisper.cpp (with CUDA)
+      - name: Build whisper.cpp (CPU-only for CI, CUDA would be ideal but not available in CI)
         run: |
           cmake -S third_party/whisper.cpp -B third_party/whisper.cpp/build_go \
-            -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release
+            -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build third_party/whisper.cpp/build_go -j$(nproc)
 
       - name: Build frontend
@@ -46,7 +45,7 @@ jobs:
         run: |
           go install github.com/wailsapp/wails/v3/cmd/wails3@latest
           $(go env GOPATH)/bin/wails3 generate bindings
-          CGO_ENABLED=1 go build -tags cuda -ldflags="-s -w" -o morgottalk-linux-amd64 .
+          CGO_ENABLED=1 go build -ldflags="-s -w" -o morgottalk-linux-amd64 .
 
       - uses: actions/upload-artifact@v4
         with:
@@ -71,10 +70,8 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build whisper.cpp (with CUDA if available)
+      - name: Build whisper.cpp
         run: |
-          cmake -S third_party/whisper.cpp -B third_party/whisper.cpp/build_go \
-            -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON -DCMAKE_BUILD_TYPE=Release || \
           cmake -S third_party/whisper.cpp -B third_party/whisper.cpp/build_go \
             -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build third_party/whisper.cpp/build_go -j4
@@ -96,7 +93,7 @@ jobs:
         run: |
           go install github.com/wailsapp/wails/v3/cmd/wails3@latest
           $(go env GOPATH)/bin/wails3.exe generate bindings
-          CGO_ENABLED=1 go build -tags cuda -ldflags="-s -w -H windowsgui" -o morgottalk-windows-amd64.exe .
+          CGO_ENABLED=1 go build -ldflags="-s -w -H windowsgui" -o morgottalk-windows-amd64.exe .
 
       - uses: actions/upload-artifact@v4
         with:
