@@ -84,7 +84,7 @@ jobs:
       - name: Build whisper.cpp (CPU-only for Windows)
         run: |
           cmake -S third_party/whisper.cpp -B third_party/whisper.cpp/build_go \
-            -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+            -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build third_party/whisper.cpp/build_go -j4
 
       - name: Fix library names for MinGW
