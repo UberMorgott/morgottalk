@@ -81,25 +81,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install CUDA 12.4 for Windows
-        shell: powershell
-        run: |
-          # Download CUDA 12.4 installer (network installer)
-          Invoke-WebRequest -Uri "https://developer.download.nvidia.com/compute/cuda/12.4.1/network_installers/cuda_12.4.1_windows_network.exe" -OutFile cuda_installer.exe
-          # Install CUDA in silent mode with components we need
-          .\cuda_installer.exe -s --skip-driver
-          # Add CUDA to PATH and environment
-          echo "C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          echo "CUDA_PATH=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "CUDAToolkit_ROOT=C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.4" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Build whisper.cpp (with CUDA)
-        shell: bash
+      - name: Build whisper.cpp (CPU-only for Windows)
         run: |
           cmake -S third_party/whisper.cpp -B third_party/whisper.cpp/build_go \
-            -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DGGML_CUDA=ON \
-            "-DCUDAToolkit_ROOT=C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v12.4" \
-            -DCMAKE_BUILD_TYPE=Release
+            -G "MinGW Makefiles" -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build third_party/whisper.cpp/build_go -j4
 
       - name: Fix library names for MinGW
@@ -119,7 +104,7 @@ jobs:
         run: |
           go install github.com/wailsapp/wails/v3/cmd/wails3@latest
           $(go env GOPATH)/bin/wails3.exe generate bindings
-          CGO_ENABLED=1 go build -tags cuda -ldflags="-s -w -H windowsgui" -o morgottalk-windows-amd64.exe .
+          CGO_ENABLED=1 go build -ldflags="-s -w -H windowsgui" -o morgottalk-windows-amd64.exe .
 
       - uses: actions/upload-artifact@v4
         with:
