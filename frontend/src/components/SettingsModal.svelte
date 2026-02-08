@@ -318,11 +318,6 @@
     gap: 16px;
     overflow-y: auto;
   }
-  .modal-body::-webkit-scrollbar { width: 3px; }
-  .modal-body::-webkit-scrollbar-track { background: transparent; }
-  .modal-body::-webkit-scrollbar-thumb { background: var(--border-subtle); border-radius: 3px; }
-
-  .field { display: flex; flex-direction: column; gap: 6px; }
   .field-label {
     font-size: 12px; color: var(--text-tertiary); letter-spacing: 0.08em;
     text-transform: uppercase; font-family: ui-monospace, monospace;
@@ -351,7 +346,7 @@
     background: var(--toggle-bg);
     color: var(--text-muted);
     cursor: pointer;
-    transition: all 0.2s;
+    transition: color 0.2s, background 0.2s, border-color 0.2s;
     display: flex;
     align-items: center;
     gap: 6px;
@@ -421,7 +416,7 @@
     color: var(--text-muted);
     border: none;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: color 0.2s, background 0.2s, border-color 0.2s;
   }
   .pill-btn:not(:last-child) {
     border-right: 1.5px solid var(--toggle-border);
@@ -463,7 +458,7 @@
     font-size: 13px;
     font-family: ui-monospace, monospace;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: color 0.2s, background 0.2s, border-color 0.2s;
     flex-shrink: 0;
   }
   .browse-btn:hover {
@@ -476,7 +471,7 @@
     padding: 8px 14px; border-radius: 6px;
     border: 1.5px solid var(--toggle-border);
     background: var(--toggle-bg); color: var(--text-tertiary);
-    font-size: 13px; cursor: pointer; transition: all 0.2s;
+    font-size: 13px; cursor: pointer; transition: color 0.2s, background 0.2s, border-color 0.2s;
   }
   .models-btn:hover { color: var(--accent); border-color: var(--border-hover); }
 
