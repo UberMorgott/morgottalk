@@ -212,7 +212,9 @@ func detectLayoutDarwin() string {
 func detectLayoutWindows() string {
 	// InputLanguage.CurrentInputLanguage returns the *active* layout (not just configured list)
 	ps := `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.InputLanguage]::CurrentInputLanguage.Culture.TwoLetterISOLanguageName`
-	if out, err := exec.Command("powershell", "-NoProfile", "-Command", ps).Output(); err == nil {
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", ps)
+	hideWindow(cmd)
+	if out, err := cmd.Output(); err == nil {
 		s := strings.TrimSpace(string(out))
 		if s != "" {
 			return s

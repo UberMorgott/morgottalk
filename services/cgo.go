@@ -1,13 +1,12 @@
 package services
 
-// CGO flags for linking whisper.cpp static libraries (base: CPU backend).
-// GPU backend flags are in cgo_cuda.go, cgo_vulkan.go, cgo_metal.go.
+// CGO flags for linking whisper.cpp shared libraries with dynamic backend loading.
+// GPU backends are loaded at runtime as DLLs/SOs via ggml_backend_load_all().
 
 // #cgo CFLAGS: -I${SRCDIR}/../third_party/whisper.cpp/include -I${SRCDIR}/../third_party/whisper.cpp/ggml/include
 // #cgo LDFLAGS: -L${SRCDIR}/../third_party/whisper.cpp/build_go/src -L${SRCDIR}/../third_party/whisper.cpp/build_go/ggml/src
-// #cgo LDFLAGS: -lwhisper -lggml -lggml-base -lggml-cpu -lm
-// #cgo linux LDFLAGS: -lstdc++ -fopenmp
-// #cgo windows LDFLAGS: -lstdc++ -static-libgcc
-// #cgo darwin LDFLAGS: -lc++ -framework Accelerate
-// #cgo darwin LDFLAGS: -L${SRCDIR}/../third_party/whisper.cpp/build_go/ggml/src/ggml-blas -lggml-blas
+// #cgo LDFLAGS: -lwhisper -lggml -lggml-base -lm
+// #cgo linux LDFLAGS: -lstdc++ -Wl,-rpath,'$ORIGIN'
+// #cgo windows LDFLAGS: -lstdc++ -static-libgcc -static-libstdc++
+// #cgo darwin LDFLAGS: -lc++ -Wl,-rpath,@executable_path
 import "C"

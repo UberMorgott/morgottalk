@@ -6,7 +6,7 @@
 
   export let value: string = '';
   export let lang: Lang = 'en';
-  let capturing = false;
+  export let capturing = false;
 
   const dispatch = createEventDispatcher<{ change: string }>();
 
@@ -37,7 +37,7 @@
 </script>
 
 <div class="hk-wrap">
-  <button class="hk-btn" class:hk-capturing={capturing} on:click={startCapture}>
+  <button class="hk-btn" class:hk-capturing={capturing} on:click|stopPropagation={startCapture}>
     {#if capturing}
       <span class="hk-pulse">{t(lang, 'pressKey')}</span>
     {:else if value}
@@ -47,7 +47,7 @@
     {/if}
   </button>
   {#if value && !capturing}
-    <button class="hk-clear" on:click={clear} title={t(lang, 'clearHotkey')}>
+    <button class="hk-clear" on:click|stopPropagation={clear} title={t(lang, 'clearHotkey')}>
       <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
         <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
       </svg>

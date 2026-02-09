@@ -103,31 +103,30 @@ func pasteTextDarwin(text string) error {
 
 func pasteTextWindows(text string) error {
 	// Save clipboard
-	saved, hadClipboard := saveClipboardWindows()
+	saved, hadClipboard := winClipRead()
 
-	// Write to clipboard via PowerShell (stdin to avoid command-line length limits)
-	psWrite := exec.Command("powershell", "-NoProfile", "-Command", "$input | Set-Clipboard")
-	psWrite.Stdin = strings.NewReader(text)
-	if err := psWrite.Run(); err != nil {
-		return fmt.Errorf("Set-Clipboard failed: %w", err)
+	// Write to clipboard via Win32 API (instant, no process spawning)
+	if err := winClipWrite(text); err != nil {
+		return fmt.Errorf("clipboard write failed: %w", err)
 	}
 
-	time.Sleep(30 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
-	// Simulate Ctrl+V (universal on Windows, including Windows Terminal)
-	psKey := `Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.SendKeys]::SendWait("^v")`
-	if err := exec.Command("powershell", "-NoProfile", "-Command", psKey).Run(); err != nil {
-		return fmt.Errorf("Ctrl+V simulation failed: %w", err)
+	// Simulate Ctrl+V via SendInput (kernel-level, goes to focused window)
+	if err := winSendCtrlV(); err != nil {
+		// SendInput blocked (UIPI: target window is elevated).
+		// Text is already in clipboard — user can Ctrl+V manually.
+		log.Printf("SendInput blocked (target may be elevated), text left in clipboard: %v", err)
+		return nil
 	}
 
 	log.Printf("Text pasted via clipboard (%d chars)", len(text))
 
+	// Restore original clipboard after delay
 	if hadClipboard {
 		go func() {
 			time.Sleep(500 * time.Millisecond)
-			cmd := exec.Command("powershell", "-NoProfile", "-Command", "$input | Set-Clipboard")
-			cmd.Stdin = strings.NewReader(saved)
-			_ = cmd.Run()
+			_ = winClipWrite(saved)
 		}()
 	}
 
@@ -196,9 +195,3 @@ func saveClipboardDarwin() (string, bool) {
 	return "", false
 }
 
-func saveClipboardWindows() (string, bool) {
-	if out, err := exec.Command("powershell", "-NoProfile", "-Command", "Get-Clipboard").Output(); err == nil {
-		return strings.TrimRight(string(out), "\r\n"), true
-	}
-	return "", false
-}

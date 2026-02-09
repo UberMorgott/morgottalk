@@ -20,6 +20,7 @@ func T(lang, key string) string {
 var translations = map[string]map[string]string{
 	"en": {
 		"tray_show":            "Show",
+		"tray_history":         "History",
 		"tray_quit":            "Quit",
 		"close_dialog_title":   "MorgoTTalk",
 		"close_dialog_message": "What would you like to do when closing the window?",
@@ -28,6 +29,7 @@ var translations = map[string]map[string]string{
 	},
 	"ru": {
 		"tray_show":            "Показать",
+		"tray_history":         "История",
 		"tray_quit":            "Выход",
 		"close_dialog_title":   "MorgoTTalk",
 		"close_dialog_message": "Что сделать при закрытии окна?",
@@ -36,6 +38,7 @@ var translations = map[string]map[string]string{
 	},
 	"de": {
 		"tray_show":            "Anzeigen",
+		"tray_history":         "Verlauf",
 		"tray_quit":            "Beenden",
 		"close_dialog_title":   "MorgoTTalk",
 		"close_dialog_message": "Was möchten Sie beim Schließen des Fensters tun?",
@@ -44,6 +47,7 @@ var translations = map[string]map[string]string{
 	},
 	"es": {
 		"tray_show":            "Mostrar",
+		"tray_history":         "Historial",
 		"tray_quit":            "Salir",
 		"close_dialog_title":   "MorgoTTalk",
 		"close_dialog_message": "¿Qué desea hacer al cerrar la ventana?",
@@ -52,6 +56,7 @@ var translations = map[string]map[string]string{
 	},
 	"fr": {
 		"tray_show":            "Afficher",
+		"tray_history":         "Historique",
 		"tray_quit":            "Quitter",
 		"close_dialog_title":   "MorgoTTalk",
 		"close_dialog_message": "Que souhaitez-vous faire en fermant la fenêtre ?",
@@ -60,6 +65,7 @@ var translations = map[string]map[string]string{
 	},
 	"zh": {
 		"tray_show":            "显示",
+		"tray_history":         "历史记录",
 		"tray_quit":            "退出",
 		"close_dialog_title":   "MorgoTTalk",
 		"close_dialog_message": "关闭窗口时您想做什么？",
@@ -68,6 +74,7 @@ var translations = map[string]map[string]string{
 	},
 	"ja": {
 		"tray_show":            "表示",
+		"tray_history":         "履歴",
 		"tray_quit":            "終了",
 		"close_dialog_title":   "MorgoTTalk",
 		"close_dialog_message": "ウィンドウを閉じるときの動作を選択してください",
@@ -76,6 +83,7 @@ var translations = map[string]map[string]string{
 	},
 	"pt": {
 		"tray_show":            "Mostrar",
+		"tray_history":         "Histórico",
 		"tray_quit":            "Sair",
 		"close_dialog_title":   "MorgoTTalk",
 		"close_dialog_message": "O que deseja fazer ao fechar a janela?",
@@ -84,6 +92,7 @@ var translations = map[string]map[string]string{
 	},
 	"ko": {
 		"tray_show":            "표시",
+		"tray_history":         "기록",
 		"tray_quit":            "종료",
 		"close_dialog_title":   "MorgoTTalk",
 		"close_dialog_message": "창을 닫을 때 어떻게 하시겠습니까?",

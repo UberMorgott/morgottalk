@@ -90,6 +90,9 @@ func main() {
 		mainWindow.Show()
 		mainWindow.Focus()
 	})
+	trayMenu.Add(i18n.T(lang, "tray_history")).OnClick(func(_ *application.Context) {
+		historyService.OpenHistoryWindow()
+	})
 	trayMenu.AddSeparator()
 	trayMenu.Add(i18n.T(lang, "tray_quit")).OnClick(func(_ *application.Context) {
 		doQuit()
@@ -107,6 +110,11 @@ func main() {
 		mainWindow.Show()
 		mainWindow.Focus()
 	})
+
+	// --- Start minimized ---
+	if cfg.StartMinimized {
+		mainWindow.Hide()
+	}
 
 	// --- Close-to-tray via RegisterHook ---
 	mainWindow.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
@@ -126,32 +134,12 @@ func main() {
 			mainWindow.Hide()
 			return
 		default:
-			// First time — ask user
+			// First time — default to tray (Wails v3 Question dialog callbacks
+			// don't work on Windows; user can change behavior in Settings).
 			e.Cancel()
-			go func() {
-				dialog := app.Dialog.Question()
-				dialog.SetTitle(i18n.T(uiLang, "close_dialog_title"))
-				dialog.SetMessage(i18n.T(uiLang, "close_dialog_message"))
-
-				trayBtn := dialog.AddButton(i18n.T(uiLang, "close_minimize"))
-				trayBtn.SetAsDefault()
-				trayBtn.OnClick(func() {
-					cfg, _ := config.Load()
-					cfg.CloseAction = "tray"
-					_ = config.Save(cfg)
-					mainWindow.Hide()
-				})
-
-				quitBtn := dialog.AddButton(i18n.T(uiLang, "close_quit"))
-				quitBtn.OnClick(func() {
-					cfg, _ := config.Load()
-					cfg.CloseAction = "quit"
-					_ = config.Save(cfg)
-					doQuit()
-				})
-
-				dialog.Show()
-			}()
+			cfg.CloseAction = "tray"
+			_ = config.Save(cfg)
+			mainWindow.Hide()
 		}
 	})
 

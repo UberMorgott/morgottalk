@@ -143,6 +143,13 @@ export class GlobalSettings {
              */
             this["autoStart"] = false;
         }
+        if (!("startMinimized" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["startMinimized"] = false;
+        }
         if (!("backend" in $$source)) {
             /**
              * @member

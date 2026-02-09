@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { createEventDispatcher, onMount } from 'svelte';
+  import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { t } from '../lib/i18n';
   import type { Lang } from '../lib/i18n';
-  import { PickModelsDir, SaveGlobalSettings, InstallBackend, GetAllBackends } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
+  import { Events } from '@wailsio/runtime';
+  import { PickModelsDir, SaveGlobalSettings, InstallBackend, GetAllBackends, RestartApp } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
 
   export let microphoneId: string = '';
   export let microphones: { id: string; name: string; isDefault: boolean }[] = [];
@@ -11,11 +12,12 @@
   export let modelsDir: string = '';
   export let closeAction: string = '';
   export let autoStart: boolean = false;
+  export let startMinimized: boolean = false;
   export let backend: string = 'auto';
-  export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string }[] = [];
+  export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string }[] = [];
 
   const dispatch = createEventDispatcher<{
-    change: { microphoneId: string; modelsDir: string; theme: 'dark' | 'light'; uiLang: Lang; closeAction: string; autoStart: boolean; backend: string };
+    change: { microphoneId: string; modelsDir: string; theme: 'dark' | 'light'; uiLang: Lang; closeAction: string; autoStart: boolean; startMinimized: boolean; backend: string };
     close: void;
     openModels: void;
   }>();
@@ -26,9 +28,14 @@
   let localModelsDir = '';
   let localCloseAction = '';
   let localAutoStart = false;
+  let localStartMinimized = false;
   let localBackend = 'auto';
   let installingBackend = '';
   let backendMessage = '';
+  let installProgress: number | null = null;
+  let installStage: 'downloading' | 'installing' | '' = '';
+  let installStageText = '';
+  let showRestartButton = false;
   let initialized = false;
 
   const langOptions: { code: Lang; label: string }[] = [
@@ -49,6 +56,8 @@
     b.compiled || b.systemAvailable || b.canInstall
   );
 
+  let unsubInstallProgress: (() => void) | null = null;
+
   onMount(() => {
     localMicId = microphoneId;
     localTheme = theme;
@@ -56,14 +65,51 @@
     localModelsDir = modelsDir;
     localCloseAction = closeAction;
     localAutoStart = autoStart;
+    localStartMinimized = startMinimized;
     localBackend = backend;
     requestAnimationFrame(() => { initialized = true; });
+
+    unsubInstallProgress = Events.On('backend:install:progress', (event: any) => {
+      const d = event.data?.[0] || event.data || event;
+      if (d.done) {
+        installProgress = null;
+        installStage = '';
+        installStageText = '';
+        if (d.error) {
+          backendMessage = d.error;
+          showRestartButton = false;
+        } else {
+          backendMessage = t(displayLang, 'backendInstalled');
+          showRestartButton = true;
+        }
+        installingBackend = '';
+        // Check if backend is now available without restart (env was refreshed in Go).
+        GetAllBackends().then(b => {
+          backends = b || [];
+          const target = b?.find((x: any) => x.id === d.backendId);
+          if (target && target.compiled && target.systemAvailable) {
+            backendMessage = t(displayLang, 'backendInstallDone');
+            showRestartButton = false;
+            localBackend = d.backendId;
+          }
+        });
+      } else {
+        installStage = d.stage || 'downloading';
+        installStageText = d.stageText || '';
+        installProgress = d.stage === 'installing' ? null : (d.percent || 0);
+      }
+    });
+  });
+
+  onDestroy(() => {
+    if (unsubInstallProgress) unsubInstallProgress();
   });
 
   // Auto-save on any change
   $: if (initialized) {
     document.documentElement.setAttribute('data-theme', localTheme);
-    const detail = { microphoneId: localMicId, modelsDir: localModelsDir, theme: localTheme, uiLang: localLang, closeAction: localCloseAction, autoStart: localAutoStart, backend: localBackend };
+    try { localStorage.setItem('morgottalk-theme', localTheme); } catch {}
+    const detail = { microphoneId: localMicId, modelsDir: localModelsDir, theme: localTheme, uiLang: localLang, closeAction: localCloseAction, autoStart: localAutoStart, startMinimized: localStartMinimized, backend: localBackend };
     SaveGlobalSettings(detail).catch(() => {});
     dispatch('change', detail);
   }
@@ -92,6 +138,11 @@
       backendMessage = '';
       return;
     }
+    // Not compiled: show info message
+    if (b.unavailableReason === 'not_compiled') {
+      backendMessage = t(displayLang, 'backend_reason_not_compiled');
+      return;
+    }
     // Can install: trigger install
     if (b.canInstall) {
       installingBackend = b.id;
@@ -100,6 +151,8 @@
         const result = await InstallBackend(b.id);
         if (result === 'url') {
           backendMessage = t(displayLang, 'backendUrlOpened');
+        } else if (result === 'installing') {
+          backendMessage = t(displayLang, 'backendInstallerLaunched');
         } else {
           backendMessage = t(displayLang, 'backendInstalled');
         }
@@ -113,8 +166,18 @@
     }
   }
 
+  async function handleRestart() {
+    try {
+      await RestartApp();
+    } catch {}
+  }
+
   function backendTooltip(b: typeof backends[0]): string {
     if (b.compiled && b.systemAvailable) return b.name;
+    if (b.unavailableReason === 'not_compiled') {
+      const gpu = b.gpuDetected ? ` (${b.gpuDetected})` : '';
+      return `${t(displayLang, 'backend_reason_not_compiled')}${gpu}`;
+    }
     if (b.canInstall && !b.compiled) return `${b.installHint} — ${t(displayLang, 'backendNeedsRebuild')}`;
     if (b.canInstall) return `${t(displayLang, 'backendInstalling').replace('...', '')}: ${b.installHint}`;
     return t(displayLang, 'backendNotAvailable');
@@ -147,22 +210,48 @@
             <button
               class="backend-pill"
               class:backend-active={localBackend === b.id && (b.compiled && b.systemAvailable)}
-              class:backend-unavailable={!(b.compiled && b.systemAvailable)}
+              class:backend-unavailable={!(b.compiled && b.systemAvailable) && b.unavailableReason !== 'not_compiled'}
+              class:backend-not-compiled={b.unavailableReason === 'not_compiled'}
               class:backend-installable={b.canInstall && !(b.compiled && b.systemAvailable)}
               class:backend-installing={installingBackend === b.id}
-              disabled={!(b.compiled && b.systemAvailable) && !b.canInstall}
+              disabled={!(b.compiled && b.systemAvailable) && !b.canInstall && b.unavailableReason !== 'not_compiled'}
               on:click={() => handleBackendClick(b)}
               title={backendTooltip(b)}
             >
               {#if installingBackend === b.id}
-                <span class="spinner"></span>
+                {#if installStage === 'downloading' && installProgress !== null}
+                  <svg class="progress-ring" width="14" height="14" viewBox="0 0 14 14">
+                    <circle class="progress-ring-bg" cx="7" cy="7" r="5" />
+                    <circle class="progress-ring-fill" cx="7" cy="7" r="5"
+                      stroke-dasharray={31.4}
+                      stroke-dashoffset={31.4 * (1 - installProgress / 100)} />
+                  </svg>
+                {:else if installStage === 'installing'}
+                  <svg class="progress-ring progress-ring-pulse" width="14" height="14" viewBox="0 0 14 14">
+                    <circle class="progress-ring-bg" cx="7" cy="7" r="5" />
+                    <circle class="progress-ring-fill" cx="7" cy="7" r="5"
+                      stroke-dasharray={31.4}
+                      stroke-dashoffset={31.4 * 0.25} />
+                  </svg>
+                {:else}
+                  <span class="spinner"></span>
+                {/if}
               {/if}
               {b.name}
             </button>
           {/each}
         </div>
-        {#if backendMessage}
-          <div class="backend-message">{backendMessage}</div>
+        {#if installStage === 'downloading' && installProgress !== null}
+          <div class="backend-message">{t(displayLang, 'backendDownloading')} {Math.round(installProgress)}%</div>
+        {:else if installStage === 'installing'}
+          <div class="backend-message">{installStageText || t(displayLang, 'backendInstalling')}</div>
+        {:else if backendMessage}
+          <div class="backend-message">
+            {backendMessage}
+            {#if showRestartButton}
+              <button class="restart-btn" on:click={handleRestart}>{t(displayLang, 'backendRestart')}</button>
+            {/if}
+          </div>
         {/if}
       </div>
 
@@ -210,20 +299,37 @@
         </div>
       </div>
 
-      <!-- Auto Start -->
-      <div class="field" title={t(displayLang, 'tip_autoStart')}>
-        <label class="field-label">{t(displayLang, 'autoStart')}</label>
-        <div class="pill-group">
-          <button
-            class="pill-btn"
-            class:pill-active={localAutoStart}
-            on:click={() => localAutoStart = true}
-          >{t(displayLang, 'on')}</button>
-          <button
-            class="pill-btn"
-            class:pill-active={!localAutoStart}
-            on:click={() => localAutoStart = false}
-          >{t(displayLang, 'off')}</button>
+      <!-- Auto Start + Start Minimized -->
+      <div class="field-row">
+        <div class="field" title={t(displayLang, 'tip_autoStart')}>
+          <label class="field-label">{t(displayLang, 'autoStart')}</label>
+          <div class="pill-group">
+            <button
+              class="pill-btn"
+              class:pill-active={localAutoStart}
+              on:click={() => localAutoStart = true}
+            >{t(displayLang, 'on')}</button>
+            <button
+              class="pill-btn"
+              class:pill-active={!localAutoStart}
+              on:click={() => localAutoStart = false}
+            >{t(displayLang, 'off')}</button>
+          </div>
+        </div>
+        <div class="field" title={t(displayLang, 'tip_startMinimized')}>
+          <label class="field-label">{t(displayLang, 'startMinimized')}</label>
+          <div class="pill-group">
+            <button
+              class="pill-btn"
+              class:pill-active={localStartMinimized}
+              on:click={() => localStartMinimized = true}
+            >{t(displayLang, 'on')}</button>
+            <button
+              class="pill-btn"
+              class:pill-active={!localStartMinimized}
+              on:click={() => localStartMinimized = false}
+            >{t(displayLang, 'off')}</button>
+          </div>
         </div>
       </div>
 
@@ -364,6 +470,16 @@
     opacity: 0.35;
     cursor: not-allowed;
   }
+  .backend-pill.backend-not-compiled {
+    opacity: 0.5;
+    cursor: help;
+    border-style: dotted;
+  }
+  .backend-pill.backend-not-compiled:hover {
+    opacity: 0.7;
+    color: var(--text-secondary);
+    border-color: var(--border-hover);
+  }
   .backend-pill.backend-installable {
     opacity: 0.55;
     cursor: pointer;
@@ -384,6 +500,25 @@
     color: var(--accent);
     font-family: ui-monospace, monospace;
     padding: 2px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .restart-btn {
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    padding: 2px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--accent);
+    background: transparent;
+    color: var(--accent);
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s;
+  }
+  .restart-btn:hover {
+    background: var(--accent);
+    color: var(--bg-page);
   }
 
   /* Spinner for installing state */
@@ -397,6 +532,29 @@
   }
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  /* Circular progress ring for download */
+  .progress-ring { transform: rotate(-90deg); }
+  .progress-ring-bg {
+    fill: none;
+    stroke: var(--text-muted);
+    stroke-width: 2;
+    opacity: 0.3;
+  }
+  .progress-ring-fill {
+    fill: none;
+    stroke: var(--accent);
+    stroke-width: 2;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.2s ease;
+  }
+  .progress-ring-pulse {
+    animation: pulse-ring 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse-ring {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
   }
 
   /* Theme pill buttons */
@@ -464,6 +622,14 @@
   .browse-btn:hover {
     color: var(--accent);
     border-color: var(--border-hover);
+  }
+
+  .field-row {
+    display: flex;
+    gap: 16px;
+  }
+  .field-row > .field {
+    flex: 1;
   }
 
   .models-btn {

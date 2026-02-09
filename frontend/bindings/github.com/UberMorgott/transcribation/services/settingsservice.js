@@ -76,6 +76,14 @@ export function PickModelsDir() {
 }
 
 /**
+ * RestartApp launches a new instance of the application and quits the current one.
+ * @returns {$CancellablePromise<void>}
+ */
+export function RestartApp() {
+    return $Call.ByID(1502287031);
+}
+
+/**
  * SaveGlobalSettings saves the global settings.
  * @param {$models.GlobalSettings} gs
  * @returns {$CancellablePromise<void>}

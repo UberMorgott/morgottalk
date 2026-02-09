@@ -32,11 +32,18 @@
   let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string }[] = [];
   let backend = 'auto';
 
-  // Theme & language state
-  let theme: 'dark' | 'light' = 'dark';
+  // Theme & language state — read localStorage to match index.html inline script
+  let theme: 'dark' | 'light' = (() => {
+    try {
+      const t = localStorage.getItem('morgottalk-theme');
+      if (t === 'light') return 'light' as const;
+    } catch {}
+    return 'dark' as const;
+  })();
   let uiLang: Lang = 'en';
   let closeAction = '';
   let autoStart = false;
+  let startMinimized = false;
 
   // Modal state
   let showSettings = false;
@@ -142,8 +149,10 @@
         }
         closeAction = gs.closeAction || '';
         autoStart = gs.autoStart || false;
+        startMinimized = gs.startMinimized || false;
         backend = gs.backend || 'auto';
         document.documentElement.setAttribute('data-theme', theme);
+        try { localStorage.setItem('morgottalk-theme', theme); } catch {}
       }
       microphones = mics || [];
       models = mdls || [];
@@ -231,7 +240,7 @@
   }
 
   // --- Settings (reactive, auto-saved by SettingsModal) ---
-  function handleSettingsChange(e: CustomEvent<{ microphoneId: string; modelsDir: string; theme: string; uiLang: string; closeAction: string; autoStart: boolean; backend: string }>) {
+  function handleSettingsChange(e: CustomEvent<{ microphoneId: string; modelsDir: string; theme: string; uiLang: string; closeAction: string; autoStart: boolean; startMinimized: boolean; backend: string }>) {
     const d = e.detail;
     microphoneId = d.microphoneId;
     modelsDir = d.modelsDir;
@@ -239,6 +248,7 @@
     uiLang = d.uiLang as Lang;
     closeAction = d.closeAction;
     autoStart = d.autoStart;
+    startMinimized = d.startMinimized;
     backend = d.backend;
   }
 
@@ -415,6 +425,7 @@
     {modelsDir}
     {closeAction}
     {autoStart}
+    {startMinimized}
     {backend}
     {backends}
     on:change={handleSettingsChange}

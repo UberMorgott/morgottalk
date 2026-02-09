@@ -30,8 +30,9 @@ type AppConfig struct {
 	Theme        string   `json:"theme"`       // "dark" | "light"
 	UILang       string   `json:"uiLang"`      // "en" | "ru"
 	CloseAction  string   `json:"closeAction"` // "" = ask, "tray", "quit"
-	AutoStart    bool     `json:"autoStart"`
-	Backend      string   `json:"backend"` // "auto", "cpu", "cuda", "vulkan", "metal", "rocm", "opencl"
+	AutoStart      bool     `json:"autoStart"`
+	StartMinimized bool     `json:"startMinimized"`
+	Backend        string   `json:"backend"` // "auto", "cpu", "cuda", "vulkan", "metal", "rocm", "opencl"
 	Presets      []Preset `json:"presets"`
 }
 

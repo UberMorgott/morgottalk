@@ -2,17 +2,37 @@ package services
 
 /*
 #include <whisper.h>
+#include <ggml-backend.h>
 #include <stdlib.h>
 */
 import "C"
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"runtime"
 	"strings"
 	"sync"
 	"unsafe"
 )
+
+var backendsLoaded sync.Once
+
+// loadGGMLBackends discovers and loads GPU backend DLLs from the executable directory.
+// Safe to call multiple times (sync.Once). If no GPU DLLs are present, only CPU is used.
+func loadGGMLBackends() {
+	backendsLoaded.Do(func() {
+		exe, err := os.Executable()
+		if err != nil {
+			return
+		}
+		dir := filepath.Dir(exe)
+		cDir := C.CString(dir)
+		defer C.free(unsafe.Pointer(cDir))
+		C.ggml_backend_load_all_from_path(cDir)
+	})
+}
 
 // WhisperEngine wraps a whisper.cpp model context.
 type WhisperEngine struct {
@@ -23,13 +43,17 @@ type WhisperEngine struct {
 // NewWhisperEngine loads a GGML model file and returns an engine ready for transcription.
 // backend: "auto", "cpu", "cuda", "vulkan", "metal".
 func NewWhisperEngine(modelPath string, backend string) (*WhisperEngine, error) {
+	loadGGMLBackends()
+
 	cPath := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(cPath))
 
 	useGPU := backendUseGPU(backend)
 	params := C.whisper_context_default_params()
 	params.use_gpu = C.bool(useGPU)
-	params.flash_attn = C.bool(useGPU)
+	// flash_attn disabled: whisper_kv_cache_get_padding() uses #ifdef GGML_USE_CUDA
+	// which is not defined with dynamic backends → incorrect padding → errors.
+	params.flash_attn = C.bool(false)
 	ctx := C.whisper_init_from_file_with_params(cPath, params)
 	if ctx == nil {
 		return nil, fmt.Errorf("failed to load whisper model: %s", modelPath)
@@ -125,7 +149,9 @@ func (w *WhisperEngine) TranscribeLong(samples []float32, lang string, translate
 	return strings.Join(parts, " "), nil
 }
 
-var whisperNoiseRe = regexp.MustCompile(`(?i)\[(BLANK_AUDIO|MUSIC|NOISE|SILENCE)\]|\((?:music|noise|silence|blank audio)\)`)
+// Whisper outputs noise markers as [MUSIC], [музыка], [音楽], etc.
+// In a push-to-talk tool, bracketed markers are never real speech — strip them all.
+var whisperNoiseRe = regexp.MustCompile(`\[[^\[\]]+\]|\((?i:music|noise|silence|blank.?audio|laughter|applause)\)`)
 
 // cleanWhisperOutput removes whisper noise markers but keeps all real text.
 func cleanWhisperOutput(text string) string {

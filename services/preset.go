@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -149,12 +150,28 @@ func (s *PresetService) onHotkeyRelease(presetID string) {
 		return
 	}
 	mode := p.InputMode
-	state := s.states[presetID]
 	s.mu.Unlock()
 
-	log.Printf("onHotkeyRelease: preset=%s mode=%s state=%s", presetID, mode, state)
+	if mode != "hold" {
+		return
+	}
 
-	if mode == "hold" && state == "recording" {
+	// Wait for state to become "recording" — handles goroutine scheduling
+	// where release goroutine runs before press goroutine sets state.
+	var state string
+	for i := 0; i < 20; i++ {
+		s.mu.Lock()
+		state = s.states[presetID]
+		s.mu.Unlock()
+		if state == "recording" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	log.Printf("onHotkeyRelease: preset=%s state=%s", presetID, state)
+
+	if state == "recording" {
 		if _, err := s.StopRecording(presetID); err != nil {
 			log.Printf("StopRecording failed: %v", err)
 		}
@@ -312,16 +329,19 @@ func (s *PresetService) StartRecording(presetID string) error {
 		return fmt.Errorf("audio not initialized")
 	}
 
+	// Set state BEFORE starting audio so onHotkeyRelease sees "recording"
+	// even if audio.Start() takes time to open the device.
+	s.states[presetID] = "recording"
 	s.mu.Unlock()
 
 	// Start audio outside lock — can block on device open
 	if err := s.audio.Start(); err != nil {
+		s.mu.Lock()
+		s.states[presetID] = "idle"
+		s.mu.Unlock()
 		return err
 	}
 
-	s.mu.Lock()
-	s.states[presetID] = "recording"
-	s.mu.Unlock()
 	return nil
 }
 

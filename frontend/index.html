@@ -5,6 +5,13 @@
     <link rel="icon" type="image/png" href="/appicon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>MorgoTTalk</title>
+    <script>
+      // Apply saved theme instantly to prevent flash
+      try {
+        var t = localStorage.getItem('morgottalk-theme');
+        if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+      } catch(e) {}
+    </script>
   </head>
   <body>
     <div id="app"></div>

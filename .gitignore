@@ -44,3 +44,19 @@ CLAUDE.md
 # Dev scripts
 kill.sh
 run.sh
+build_and_run.bat
+build_only.bat
+_build_*.txt
+_build_*.ps1
+
+# Runtime DLLs (built from whisper.cpp, not committed)
+*.dll
+*.so
+*.dylib
+
+# Serena (MCP)
+.serena/
+
+# Misc
+NUL
+run.log

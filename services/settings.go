@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"unsafe"
 
@@ -34,8 +35,9 @@ type GlobalSettings struct {
 	Theme        string `json:"theme"`
 	UILang       string `json:"uiLang"`
 	CloseAction  string `json:"closeAction"`
-	AutoStart    bool   `json:"autoStart"`
-	Backend      string `json:"backend"`
+	AutoStart      bool   `json:"autoStart"`
+	StartMinimized bool   `json:"startMinimized"`
+	Backend        string `json:"backend"`
 }
 
 // SettingsService provides global settings management to the frontend.
@@ -53,13 +55,14 @@ func (s *SettingsService) GetGlobalSettings() GlobalSettings {
 		backend = "auto"
 	}
 	return GlobalSettings{
-		MicrophoneID: cfg.MicrophoneID,
-		ModelsDir:    cfg.ModelsDir,
-		Theme:        cfg.Theme,
-		UILang:       cfg.UILang,
-		CloseAction:  cfg.CloseAction,
-		AutoStart:    cfg.AutoStart,
-		Backend:      backend,
+		MicrophoneID:   cfg.MicrophoneID,
+		ModelsDir:      cfg.ModelsDir,
+		Theme:          cfg.Theme,
+		UILang:         cfg.UILang,
+		CloseAction:    cfg.CloseAction,
+		AutoStart:      cfg.AutoStart,
+		StartMinimized: cfg.StartMinimized,
+		Backend:        backend,
 	}
 }
 
@@ -73,6 +76,7 @@ func (s *SettingsService) SaveGlobalSettings(gs GlobalSettings) error {
 	cfg.UILang = gs.UILang
 	cfg.CloseAction = gs.CloseAction
 	cfg.AutoStart = gs.AutoStart
+	cfg.StartMinimized = gs.StartMinimized
 	cfg.Backend = gs.Backend
 	if err := config.Save(cfg); err != nil {
 		return err
@@ -109,6 +113,22 @@ func (s *SettingsService) GetAllBackends() []BackendInfo {
 // "url" if a download page was opened in the browser.
 func (s *SettingsService) InstallBackend(id string) (string, error) {
 	return installBackend(id)
+}
+
+// RestartApp launches a new instance of the application and quits the current one.
+func (s *SettingsService) RestartApp() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(exe, os.Args[1:]...)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	if app := application.Get(); app != nil {
+		app.Quit()
+	}
+	return nil
 }
 
 // PickModelsDir opens a native directory picker dialog.

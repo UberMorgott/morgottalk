@@ -30,6 +30,8 @@
     modelChanged: string;
   }>();
 
+  let capturingHotkey = false;
+
   let form = {
     id: '',
     name: '',
@@ -62,7 +64,7 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') dispatch('close');
+    if (e.key === 'Escape' && !capturingHotkey) dispatch('close');
   }
 
   function handleSave() {
@@ -137,7 +139,7 @@
       <!-- Hotkey -->
       <div class="field" title={t(lang, 'tip_hotkey')}>
         <label class="field-label">{t(lang, 'hotkey')}</label>
-        <HotkeyCapture bind:value={form.hotkey} {lang} />
+        <HotkeyCapture bind:value={form.hotkey} {lang} bind:capturing={capturingHotkey} />
       </div>
 
       <!-- Use KB layout -->
