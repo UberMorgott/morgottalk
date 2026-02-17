@@ -31,7 +31,7 @@ export class BackendInfo {
         }
         if (!("compiled" in $$source)) {
             /**
-             * binary includes this backend (build tag)
+             * backend DLL present next to exe
              * @member
              * @type {boolean}
              */
@@ -76,6 +76,22 @@ export class BackendInfo {
              * @type {string}
              */
             this["gpuDetected"] = "";
+        }
+        if (!("recommended" in $$source)) {
+            /**
+             * best backend for detected hardware
+             * @member
+             * @type {boolean}
+             */
+            this["recommended"] = false;
+        }
+        if (!("downloadSizeMB" in $$source)) {
+            /**
+             * approximate DLL download size, 0 = unknown
+             * @member
+             * @type {number}
+             */
+            this["downloadSizeMB"] = 0;
         }
 
         Object.assign(this, $$source);
@@ -156,6 +172,13 @@ export class GlobalSettings {
              * @type {string}
              */
             this["backend"] = "";
+        }
+        if (!("onboardingDone" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["onboardingDone"] = false;
         }
 
         Object.assign(this, $$source);
@@ -311,30 +334,6 @@ export class ModelInfo {
     static createFrom($$source = {}) {
         let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
         return new ModelInfo(/** @type {Partial<ModelInfo>} */($$parsedSource));
-    }
-}
-
-/**
- * ModelService manages whisper model files.
- */
-export class ModelService {
-    /**
-     * Creates a new ModelService instance.
-     * @param {Partial<ModelService>} [$$source = {}] - The source object to create the ModelService.
-     */
-    constructor($$source = {}) {
-
-        Object.assign(this, $$source);
-    }
-
-    /**
-     * Creates a new ModelService instance from a string or object.
-     * @param {any} [$$source = {}]
-     * @returns {ModelService}
-     */
-    static createFrom($$source = {}) {
-        let $$parsedSource = typeof $$source === 'string' ? JSON.parse($$source) : $$source;
-        return new ModelService(/** @type {Partial<ModelService>} */($$parsedSource));
     }
 }
 

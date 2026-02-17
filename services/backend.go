@@ -17,6 +17,8 @@ type BackendInfo struct {
 	InstallHint       string `json:"installHint"`       // e.g. "CUDA Toolkit"
 	UnavailableReason string `json:"unavailableReason"` // "" | "no_hardware" | "no_driver" | "no_runtime" | "not_compiled"
 	GPUDetected       string `json:"gpuDetected"`       // e.g. "NVIDIA RTX 5070 Ti", ""
+	Recommended       bool   `json:"recommended"`       // best backend for detected hardware
+	DownloadSizeMB    int    `json:"downloadSizeMB"`    // approximate DLL download size, 0 = unknown
 }
 
 // gpuDetection holds the results of platform-specific GPU/runtime detection.
@@ -28,7 +30,6 @@ type gpuDetection struct {
 	HasAMD          bool
 	AMDModel        string // "AMD Radeon RX 7900", ""
 	ROCmAvailable   bool
-	OpenCLAvailable bool
 	PackageManager  string // "pacman", "apt", "dnf", "zypper", ""
 }
 
@@ -76,15 +77,35 @@ func backendDLLExists(name string) bool {
 // GetAllBackends returns ALL known backends with their availability status.
 func GetAllBackends() []BackendInfo {
 	det := detectGPU()
-	return []BackendInfo{
+	backends := []BackendInfo{
 		{ID: "auto", Name: "Auto", Compiled: true, SystemAvailable: true},
 		{ID: "cpu", Name: "CPU", Compiled: true, SystemAvailable: true},
 		cudaBackend(det),
 		vulkanBackend(det),
 		metalBackend(det),
-		rocmBackend(det),
-		openclBackend(det),
 	}
+
+	// Mark recommended backend based on detected hardware.
+	var recID string
+	switch {
+	case runtime.GOOS == "darwin":
+		recID = "metal"
+	case det.HasNVIDIA:
+		recID = "cuda"
+	case det.VulkanAvailable:
+		recID = "vulkan"
+	}
+	for i := range backends {
+		if backends[i].ID == recID {
+			backends[i].Recommended = true
+		}
+		// Fill download sizes for backends that can be downloaded.
+		if !backends[i].Compiled && backends[i].CanInstall {
+			backends[i].DownloadSizeMB = backendDownloadSize(backends[i].ID)
+		}
+	}
+
+	return backends
 }
 
 func cudaBackend(det gpuDetection) BackendInfo {
@@ -114,6 +135,8 @@ func cudaBackend(det gpuDetection) BackendInfo {
 	} else {
 		info.SystemAvailable = true
 		info.UnavailableReason = "not_compiled"
+		info.CanInstall = true
+		info.InstallHint = "cuda_driver_525"
 	}
 
 	return info
@@ -139,6 +162,7 @@ func vulkanBackend(det gpuDetection) BackendInfo {
 	} else {
 		info.SystemAvailable = true
 		info.UnavailableReason = "not_compiled"
+		info.CanInstall = true
 	}
 
 	return info
@@ -154,59 +178,19 @@ func metalBackend(det gpuDetection) BackendInfo {
 	}
 }
 
-func rocmBackend(det gpuDetection) BackendInfo {
-	hasDLL := backendDLLExists("rocm")
-	info := BackendInfo{
-		ID: "rocm", Name: "ROCm",
-		Compiled: hasDLL,
+
+func backendDownloadSize(id string) int {
+	sizes := map[string]map[string]int{
+		"cuda":   {"windows": 150, "linux": 200},
+		"vulkan": {"windows": 57, "linux": 70},
+		"metal":  {"darwin": 5},
 	}
-
-	if !det.HasAMD {
-		info.UnavailableReason = "no_hardware"
-		return info
+	if m, ok := sizes[id]; ok {
+		if sz, ok := m[runtime.GOOS]; ok {
+			return sz
+		}
 	}
-
-	info.GPUDetected = det.AMDModel
-
-	if !det.ROCmAvailable {
-		info.UnavailableReason = "no_runtime"
-		info.CanInstall = true
-		info.InstallHint = "ROCm/HIP Runtime"
-		return info
-	}
-
-	if hasDLL {
-		info.SystemAvailable = true
-	} else {
-		info.SystemAvailable = true
-		info.UnavailableReason = "not_compiled"
-	}
-
-	return info
-}
-
-func openclBackend(det gpuDetection) BackendInfo {
-	hasDLL := backendDLLExists("opencl")
-	info := BackendInfo{
-		ID: "opencl", Name: "OpenCL",
-		Compiled: hasDLL,
-	}
-
-	if !det.OpenCLAvailable {
-		info.UnavailableReason = "no_runtime"
-		info.CanInstall = true
-		info.InstallHint = "OpenCL Runtime"
-		return info
-	}
-
-	if hasDLL {
-		info.SystemAvailable = true
-	} else {
-		info.SystemAvailable = true
-		info.UnavailableReason = "not_compiled"
-	}
-
-	return info
+	return 0
 }
 
 // backendUseGPU returns whether a given backend should enable GPU acceleration.

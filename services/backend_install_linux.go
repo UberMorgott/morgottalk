@@ -12,28 +12,61 @@ import (
 )
 
 func installBackend(id string) (string, error) {
-	pm := detectPackageManager()
-	if pm == "" {
-		return "", fmt.Errorf("no supported package manager found")
+	go installBackendAsyncLinux(id)
+	return "installing", nil
+}
+
+func installBackendAsyncLinux(id string) {
+	emit := func(stage, stageText string, pct float64, done bool, errMsg string) {
+		emitBackendProgress(id, stage, stageText, pct, done, errMsg)
 	}
 
-	// CUDA uses NVIDIA official repo (except Arch which has up-to-date packages).
+	// Step 1: Install system runtime via package manager.
+	emit("installing_runtime", "", 0, false, "")
+	if err := installSystemRuntime(id); err != nil {
+		emit("", "", 0, true, err.Error())
+		return
+	}
+
+	// Step 2: Download the backend library (.so).
+	emit("downloading", "", 0, false, "")
+	if err := downloadBackendDLL(id); err != nil {
+		emit("", "", 0, true, fmt.Sprintf("Backend download failed: %v", err))
+		return
+	}
+
+	// Step 3: Hot-apply.
+	if onBackendInstalled != nil {
+		onBackendInstalled(id)
+	}
+
+	emit("", "", 100, true, "")
+}
+
+func installSystemRuntime(id string) error {
+	pm := detectPackageManager()
+	if pm == "" {
+		return fmt.Errorf("no supported package manager found")
+	}
+
 	if id == "cuda" && pm != "pacman" {
-		return installCUDALinux(pm)
+		_, err := installCUDALinux(pm)
+		return err
 	}
 
 	packages := backendPackages(pm, id)
 	if len(packages) == 0 {
-		return "", fmt.Errorf("no packages known for backend %q on %s", id, pm)
+		// No system packages needed — runtime may already come with GPU drivers.
+		return nil
 	}
 
 	args := installArgs(pm, packages)
 	cmd := exec.Command("pkexec", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("install failed: %s\n%s", err, string(out))
+		return fmt.Errorf("install failed: %s\n%s", err, string(out))
 	}
-	return "installed", nil
+	return nil
 }
 
 // installCUDALinux adds NVIDIA's official repo and installs cuda-toolkit meta-package.
@@ -125,13 +158,17 @@ func installCUDADebian(slug string) error {
 	}
 	defer os.Remove(keyringPath)
 
-	// Install keyring, update, install cuda-toolkit — all elevated via pkexec.
-	// Uses bash -c to chain commands under a single elevation prompt.
-	cmd := exec.Command("pkexec", "bash", "-c",
-		fmt.Sprintf("dpkg -i %s && apt-get update && apt-get install -y cuda-toolkit", keyringPath))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("install failed: %s\n%s", err, string(out))
+	cmd := exec.Command("pkexec", "dpkg", "-i", keyringPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("dpkg install failed: %s\n%s", err, string(out))
+	}
+	cmd2 := exec.Command("pkexec", "apt-get", "update")
+	if out, err := cmd2.CombinedOutput(); err != nil {
+		return fmt.Errorf("apt-get update failed: %s\n%s", err, string(out))
+	}
+	cmd3 := exec.Command("pkexec", "apt-get", "install", "-y", "cuda-toolkit")
+	if out, err := cmd3.CombinedOutput(); err != nil {
+		return fmt.Errorf("apt-get install cuda-toolkit failed: %s\n%s", err, string(out))
 	}
 	return nil
 }
@@ -140,11 +177,13 @@ func installCUDADebian(slug string) error {
 func installCUDAFedora(distroID, slug string) error {
 	repoURL := nvidiaRepoBase + slug + "/cuda-" + distroID + ".repo"
 
-	cmd := exec.Command("pkexec", "bash", "-c",
-		fmt.Sprintf("dnf config-manager --add-repo %s && dnf install -y cuda-toolkit", repoURL))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("install failed: %s\n%s", err, string(out))
+	cmd := exec.Command("pkexec", "dnf", "config-manager", "--add-repo", repoURL)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("dnf config-manager failed: %s\n%s", err, string(out))
+	}
+	cmd2 := exec.Command("pkexec", "dnf", "install", "-y", "cuda-toolkit")
+	if out, err := cmd2.CombinedOutput(); err != nil {
+		return fmt.Errorf("dnf install cuda-toolkit failed: %s\n%s", err, string(out))
 	}
 	return nil
 }
@@ -153,11 +192,17 @@ func installCUDAFedora(distroID, slug string) error {
 func installCUDAOpenSUSE(slug string) error {
 	repoURL := nvidiaRepoBase + slug + "/"
 
-	cmd := exec.Command("pkexec", "bash", "-c",
-		fmt.Sprintf("zypper addrepo --refresh %s cuda-repo && zypper --gpg-auto-import-keys refresh && zypper install -y cuda-toolkit", repoURL))
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("install failed: %s\n%s", err, string(out))
+	cmd := exec.Command("pkexec", "zypper", "addrepo", "--refresh", repoURL, "cuda-repo")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("zypper addrepo failed: %s\n%s", err, string(out))
+	}
+	cmd2 := exec.Command("pkexec", "zypper", "--gpg-auto-import-keys", "refresh")
+	if out, err := cmd2.CombinedOutput(); err != nil {
+		return fmt.Errorf("zypper refresh failed: %s\n%s", err, string(out))
+	}
+	cmd3 := exec.Command("pkexec", "zypper", "install", "-y", "cuda-toolkit")
+	if out, err := cmd3.CombinedOutput(); err != nil {
+		return fmt.Errorf("zypper install cuda-toolkit failed: %s\n%s", err, string(out))
 	}
 	return nil
 }
@@ -210,17 +255,6 @@ func backendPackages(pm, id string) []string {
 			return []string{"rocm-hip-runtime"}
 		case "dnf":
 			return []string{"rocm-hip-runtime"}
-		}
-	case "opencl":
-		switch pm {
-		case "pacman":
-			return []string{"ocl-icd"}
-		case "apt":
-			return []string{"ocl-icd-libopencl1"}
-		case "dnf":
-			return []string{"ocl-icd"}
-		case "zypper":
-			return []string{"ocl-icd"}
 		}
 	}
 	return nil

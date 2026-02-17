@@ -75,6 +75,15 @@ var catalog = []modelCatalogEntry{
 	{"large-v3-turbo-q8_0", 862_000_000, "862 MB"},
 }
 
+func isValidModelName(name string) bool {
+	for _, c := range catalog {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
 // ModelService manages whisper model files.
 type ModelService struct {
 	mu          sync.Mutex
@@ -116,7 +125,11 @@ func (s *ModelService) GetModelsDir() string {
 
 // ResolveModelsDir determines the models directory.
 func (s *ModelService) ResolveModelsDir() string {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Printf("failed to load config: %v", err)
+		cfg = &config.AppConfig{}
+	}
 	if cfg.ModelsDir != "" {
 		os.MkdirAll(cfg.ModelsDir, 0o755)
 		return cfg.ModelsDir
@@ -157,6 +170,9 @@ func xdgModelsDir() string {
 
 // DownloadModel downloads a model from HuggingFace with progress events.
 func (s *ModelService) DownloadModel(name string) error {
+	if !isValidModelName(name) {
+		return fmt.Errorf("unknown model name: %s", name)
+	}
 	s.mu.Lock()
 	if _, exists := s.downloading[name]; exists {
 		s.mu.Unlock()
@@ -295,6 +311,9 @@ func (s *ModelService) CancelDownload(name string) {
 
 // DeleteModel removes a downloaded model file.
 func (s *ModelService) DeleteModel(name string) error {
+	if !isValidModelName(name) {
+		return fmt.Errorf("unknown model name: %s", name)
+	}
 	dir := s.ResolveModelsDir()
 	fileName := "ggml-" + name + ".bin"
 	path := filepath.Join(dir, fileName)
@@ -324,7 +343,11 @@ func (s *ModelService) SetModelsDir(newDir string, moveModels bool) error {
 		}
 	}
 
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		log.Printf("failed to load config: %v", err)
+		cfg = &config.AppConfig{}
+	}
 	cfg.ModelsDir = newDir
 	return config.Save(cfg)
 }

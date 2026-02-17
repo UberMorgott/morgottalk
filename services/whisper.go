@@ -19,7 +19,8 @@ import (
 
 var backendsLoaded sync.Once
 
-// loadGGMLBackends discovers and loads GPU backend DLLs from the executable directory.
+// loadGGMLBackends loads optional GPU backend DLLs from the executable directory.
+// CPU backend is statically linked. GPU backends (Vulkan, CUDA, etc.) are optional DLLs.
 // Safe to call multiple times (sync.Once). If no GPU DLLs are present, only CPU is used.
 func loadGGMLBackends() {
 	backendsLoaded.Do(func() {
@@ -32,6 +33,15 @@ func loadGGMLBackends() {
 		defer C.free(unsafe.Pointer(cDir))
 		C.ggml_backend_load_all_from_path(cDir)
 	})
+}
+
+// loadBackendDLL loads a single GPU backend DLL by path (e.g. after downloading it).
+// Returns true if the backend was successfully loaded and registered.
+func loadBackendDLL(dllPath string) bool {
+	cPath := C.CString(dllPath)
+	defer C.free(unsafe.Pointer(cPath))
+	reg := C.ggml_backend_load(cPath)
+	return reg != nil
 }
 
 // WhisperEngine wraps a whisper.cpp model context.
@@ -51,8 +61,7 @@ func NewWhisperEngine(modelPath string, backend string) (*WhisperEngine, error) 
 	useGPU := backendUseGPU(backend)
 	params := C.whisper_context_default_params()
 	params.use_gpu = C.bool(useGPU)
-	// flash_attn disabled: whisper_kv_cache_get_padding() uses #ifdef GGML_USE_CUDA
-	// which is not defined with dynamic backends → incorrect padding → errors.
+	// flash_attn disabled: padding calculation depends on GGML_USE_CUDA/METAL compile flags.
 	params.flash_attn = C.bool(false)
 	ctx := C.whisper_init_from_file_with_params(cPath, params)
 	if ctx == nil {
@@ -60,6 +69,32 @@ func NewWhisperEngine(modelPath string, backend string) (*WhisperEngine, error) 
 	}
 
 	return &WhisperEngine{ctx: ctx}, nil
+}
+
+// IsMultilingual returns true if the loaded model supports multiple languages.
+func (w *WhisperEngine) IsMultilingual() bool {
+	return C.whisper_is_multilingual(w.ctx) != 0
+}
+
+// WhisperLanguages returns all languages supported by whisper.cpp library.
+// First entry is always {"auto", "Auto-detect"}.
+func WhisperLanguages() []LanguageInfo {
+	maxID := int(C.whisper_lang_max_id())
+	langs := make([]LanguageInfo, 0, maxID+2)
+	langs = append(langs, LanguageInfo{Code: "auto", Name: "Auto-detect"})
+	for i := 0; i <= maxID; i++ {
+		code := C.GoString(C.whisper_lang_str(C.int(i)))
+		name := C.GoString(C.whisper_lang_str_full(C.int(i)))
+		if code == "" {
+			continue
+		}
+		// Capitalize first letter of the name
+		if len(name) > 0 {
+			name = strings.ToUpper(name[:1]) + name[1:]
+		}
+		langs = append(langs, LanguageInfo{Code: code, Name: name})
+	}
+	return langs
 }
 
 // Transcribe runs speech-to-text on float32 PCM samples (16 kHz, mono).
@@ -122,8 +157,13 @@ const chunkSeconds = 25
 const chunkSamples = chunkSeconds * 16000
 
 // TranscribeLong splits long audio into chunks for reliable transcription.
-func (w *WhisperEngine) TranscribeLong(samples []float32, lang string, translate bool) (string, error) {
-	if len(samples) <= chunkSamples {
+// onProgress is called after each chunk with (current, total) chunk indices (1-based).
+func (w *WhisperEngine) TranscribeLong(samples []float32, lang string, translate bool, onProgress func(current, total int)) (string, error) {
+	totalChunks := (len(samples) + chunkSamples - 1) / chunkSamples
+	if totalChunks <= 1 {
+		if onProgress != nil {
+			onProgress(1, 1)
+		}
 		text, err := w.Transcribe(samples, lang, translate)
 		if err != nil {
 			return "", err
@@ -132,10 +172,15 @@ func (w *WhisperEngine) TranscribeLong(samples []float32, lang string, translate
 	}
 
 	var parts []string
+	chunk := 0
 	for i := 0; i < len(samples); i += chunkSamples {
+		chunk++
 		end := i + chunkSamples
 		if end > len(samples) {
 			end = len(samples)
+		}
+		if onProgress != nil {
+			onProgress(chunk, totalChunks)
 		}
 		text, err := w.Transcribe(samples[i:end], lang, translate)
 		if err != nil {

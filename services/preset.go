@@ -3,6 +3,7 @@ package services
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,9 +11,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/UberMorgott/transcribation/internal/config"
 )
+
+const maxRecordDuration = 3 * time.Minute
 
 // PresetState represents the recording state of a preset.
 type PresetState struct {
@@ -28,19 +32,24 @@ type TranscriptionResult struct {
 
 // PresetService manages presets, recording, and transcription.
 type PresetService struct {
-	mu       sync.Mutex
-	cfg      *config.AppConfig
-	engines  map[string]*WhisperEngine // preset ID → loaded engine
-	audio    *AudioCapture
-	history  *HistoryService
-	models   *ModelService
-	hotkeys  *HotkeyManager
-	states   map[string]string // preset ID → "idle"/"recording"/"processing"
-	lastText string
+	mu          sync.Mutex
+	cfg         *config.AppConfig
+	engines     map[string]*WhisperEngine // preset ID → loaded engine
+	audio       *AudioCapture
+	history     *HistoryService
+	models      *ModelService
+	hotkeys     *HotkeyManager
+	states      map[string]string // preset ID → "idle"/"recording"/"processing"
+	lastText    string
+	recordTimer *time.Timer // auto-stop after maxRecordDuration
+	recordingID string      // preset ID being recorded (for auto-stop)
 }
 
 func NewPresetService(history *HistoryService, models *ModelService) *PresetService {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Warn("failed to load config", "err", err)
+	}
 	return &PresetService{
 		cfg:     cfg,
 		engines: make(map[string]*WhisperEngine),
@@ -185,11 +194,9 @@ func (s *PresetService) GetPresets() []config.Preset {
 	return s.cfg.Presets
 }
 
-// CreatePreset adds a new preset and saves config.
+// CreatePreset adds a new preset, saves config, and registers hotkey if enabled.
 func (s *PresetService) CreatePreset(p config.Preset) config.Preset {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	p.ID = uuid.New().String()
 	if p.InputMode == "" {
 		p.InputMode = "hold"
@@ -200,6 +207,11 @@ func (s *PresetService) CreatePreset(p config.Preset) config.Preset {
 	s.cfg.Presets = append(s.cfg.Presets, p)
 	s.states[p.ID] = "idle"
 	_ = config.Save(s.cfg)
+	s.mu.Unlock() // release before activatePreset (must be called without lock)
+
+	if p.Enabled {
+		go s.activatePreset(&p) // register hotkey + optionally preload model
+	}
 	return p
 }
 
@@ -310,11 +322,14 @@ func (s *PresetService) ReorderPresets(ids []string) error {
 func (s *PresetService) StartRecording(presetID string) error {
 	s.mu.Lock()
 
-	// Check if any preset is already recording
-	for id, state := range s.states {
-		if state == "recording" && id != presetID {
+	// Check if any preset is already recording or processing.
+	// This also prevents re-entering recording for the same preset while it
+	// is still active, avoiding state corruption when StopRecording from a
+	// concurrent goroutine sets state back to "idle" mid-transcription.
+	for _, st := range s.states {
+		if st == "recording" || st == "processing" {
 			s.mu.Unlock()
-			return fmt.Errorf("preset %s is already recording", id)
+			return fmt.Errorf("a preset is already active")
 		}
 	}
 
@@ -332,15 +347,29 @@ func (s *PresetService) StartRecording(presetID string) error {
 	// Set state BEFORE starting audio so onHotkeyRelease sees "recording"
 	// even if audio.Start() takes time to open the device.
 	s.states[presetID] = "recording"
+	s.recordingID = presetID
 	s.mu.Unlock()
 
 	// Start audio outside lock — can block on device open
 	if err := s.audio.Start(); err != nil {
 		s.mu.Lock()
 		s.states[presetID] = "idle"
+		s.recordingID = ""
 		s.mu.Unlock()
 		return err
 	}
+
+	showOverlay("recording")
+
+	// Auto-stop after maxRecordDuration
+	s.mu.Lock()
+	s.recordTimer = time.AfterFunc(maxRecordDuration, func() {
+		log.Printf("Auto-stopping recording for preset %s (max %v reached)", presetID, maxRecordDuration)
+		if _, err := s.StopRecording(presetID); err != nil {
+			log.Printf("Auto-stop failed: %v", err)
+		}
+	})
+	s.mu.Unlock()
 
 	return nil
 }
@@ -353,16 +382,26 @@ func (s *PresetService) StopRecording(presetID string) (TranscriptionResult, err
 		return TranscriptionResult{}, nil
 	}
 
+	// Cancel auto-stop timer
+	if s.recordTimer != nil {
+		s.recordTimer.Stop()
+		s.recordTimer = nil
+	}
+
 	samples := s.audio.Stop()
 	s.states[presetID] = "processing"
+	s.recordingID = ""
 	p := s.findPresetByID(presetID)
 	if p == nil {
 		s.states[presetID] = "idle"
 		s.mu.Unlock()
+		hideOverlay()
 		return TranscriptionResult{}, fmt.Errorf("preset not found")
 	}
 	preset := *p // copy
 	s.mu.Unlock()
+
+	showOverlay("processing")
 
 	// Minimum recording duration: 0.5s at 16kHz = 8000 samples.
 	// Short accidental presses produce silence that whisper hallucinates on.
@@ -372,14 +411,19 @@ func (s *PresetService) StopRecording(presetID string) (TranscriptionResult, err
 		s.mu.Lock()
 		s.states[presetID] = "idle"
 		s.mu.Unlock()
+		hideOverlay()
 		return TranscriptionResult{}, nil
 	}
+
+	durationSec := len(samples) / 16000
+	log.Printf("Recording stopped: %d samples (%.1fs)", len(samples), float64(len(samples))/16000)
 
 	engine, err := s.getOrLoadEngine(&preset)
 	if err != nil {
 		s.mu.Lock()
 		s.states[presetID] = "idle"
 		s.mu.Unlock()
+		hideOverlay()
 		return TranscriptionResult{Error: "Model load failed: " + err.Error()}, nil
 	}
 
@@ -397,11 +441,27 @@ func (s *PresetService) StopRecording(presetID string) (TranscriptionResult, err
 		}
 	}
 
-	text, err := engine.TranscribeLong(samples, lang, translate)
+	// Emit transcription progress events for long recordings (>25s)
+	onProgress := func(current, total int) {
+		if total <= 1 {
+			return
+		}
+		log.Printf("Transcribing chunk %d/%d (~%ds audio)", current, total, durationSec)
+		if app := application.Get(); app != nil {
+			app.Event.Emit("transcription:progress", map[string]any{
+				"presetId": presetID,
+				"current":  current,
+				"total":    total,
+			})
+		}
+	}
+
+	text, err := engine.TranscribeLong(samples, lang, translate, onProgress)
 	if err != nil {
 		s.mu.Lock()
 		s.states[presetID] = "idle"
 		s.mu.Unlock()
+		hideOverlay()
 		return TranscriptionResult{Error: "Transcription failed: " + err.Error()}, nil
 	}
 
@@ -436,6 +496,7 @@ func (s *PresetService) StopRecording(presetID string) (TranscriptionResult, err
 	s.lastText = result
 	s.mu.Unlock()
 
+	hideOverlay()
 	return TranscriptionResult{Text: result}, nil
 }
 
@@ -478,15 +539,30 @@ func (s *PresetService) CancelCapture() {
 }
 
 // GetModelLanguages returns available languages for a specific model.
+// If the model is loaded in any engine, uses whisper_is_multilingual from the C API.
+// Otherwise falls back to checking the model name for ".en" suffix.
 func (s *PresetService) GetModelLanguages(modelName string) []LanguageInfo {
-	if isEnglishOnlyModel(modelName) {
+	multilingual := !isEnglishOnlyModel(modelName) // fallback by name
+
+	// Try to find a loaded engine for this model — use C API for accurate check
+	s.mu.Lock()
+	for _, p := range s.cfg.Presets {
+		if p.ModelName == modelName {
+			if eng, ok := s.engines[p.ID]; ok && eng != nil {
+				multilingual = eng.IsMultilingual()
+				break
+			}
+		}
+	}
+	s.mu.Unlock()
+
+	if !multilingual {
 		return []LanguageInfo{{"en", "English"}}
 	}
-	return allLanguages()
+	return WhisperLanguages()
 }
 
 func isEnglishOnlyModel(name string) bool {
-	// Models with ".en" suffix are English-only
 	parts := strings.Split(name, "-")
 	for _, p := range parts {
 		if strings.HasSuffix(p, ".en") {
@@ -496,40 +572,30 @@ func isEnglishOnlyModel(name string) bool {
 	return strings.HasSuffix(name, ".en")
 }
 
-func allLanguages() []LanguageInfo {
-	return []LanguageInfo{
-		{"auto", "Auto-detect"},
-		{"en", "English"},
-		{"ru", "Russian"},
-		{"zh", "Chinese"},
-		{"de", "German"},
-		{"es", "Spanish"},
-		{"fr", "French"},
-		{"it", "Italian"},
-		{"ja", "Japanese"},
-		{"ko", "Korean"},
-		{"nl", "Dutch"},
-		{"pl", "Polish"},
-		{"pt", "Portuguese"},
-		{"tr", "Turkish"},
-		{"uk", "Ukrainian"},
-		{"ar", "Arabic"},
-		{"cs", "Czech"},
-		{"da", "Danish"},
-		{"fi", "Finnish"},
-		{"el", "Greek"},
-		{"he", "Hebrew"},
-		{"hi", "Hindi"},
-		{"hu", "Hungarian"},
-		{"id", "Indonesian"},
-		{"ms", "Malay"},
-		{"no", "Norwegian"},
-		{"ro", "Romanian"},
-		{"sk", "Slovak"},
-		{"sv", "Swedish"},
-		{"th", "Thai"},
-		{"vi", "Vietnamese"},
+// FlushEngines closes all cached whisper engines so they are recreated
+// with new settings (e.g. after a GPU backend is installed).
+func (s *PresetService) FlushEngines() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, engine := range s.engines {
+		engine.Close()
+		delete(s.engines, id)
 	}
+	log.Println("Flushed all cached whisper engines")
+}
+
+// ReloadConfig reloads configuration from disk and updates in-memory state.
+// Call after external changes (e.g. backend changed via Settings UI).
+func (s *PresetService) ReloadConfig() {
+	cfg, err := config.Load()
+	if err != nil {
+		log.Printf("ReloadConfig: failed to load config: %v", err)
+		return
+	}
+	s.mu.Lock()
+	s.cfg = cfg
+	s.mu.Unlock()
+	log.Printf("PresetService: config reloaded (backend=%s)", cfg.Backend)
 }
 
 // Shutdown releases all resources.
@@ -554,6 +620,7 @@ func (s *PresetService) getOrLoadEngine(p *config.Preset) (*WhisperEngine, error
 	s.mu.Lock()
 	if engine, ok := s.engines[p.ID]; ok {
 		s.mu.Unlock()
+		log.Printf("Using cached model for preset %q", p.Name)
 		return engine, nil
 	}
 	s.mu.Unlock()

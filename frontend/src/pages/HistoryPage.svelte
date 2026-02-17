@@ -9,12 +9,21 @@
   let confirmClear = false;
   let lang: Lang = 'en';
 
+  // Apply theme synchronously from localStorage — prevents flash before async RPC
+  (() => {
+    try {
+      const t = localStorage.getItem('morgottalk-theme');
+      if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+    } catch {}
+  })();
+
   onMount(async () => {
-    // Apply theme and language
+    // Authoritative theme + lang from config (overrides localStorage if diverged)
     try {
       const gs = await GetGlobalSettings();
       if (gs?.theme) {
         document.documentElement.setAttribute('data-theme', gs.theme);
+        try { localStorage.setItem('morgottalk-theme', gs.theme); } catch {}
       }
       if (gs?.uiLang) {
         lang = gs.uiLang as Lang;

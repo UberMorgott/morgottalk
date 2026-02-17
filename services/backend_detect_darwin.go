@@ -31,8 +31,6 @@ func detectGPU() gpuDetection {
 	// ROCm is not available on macOS
 	det.ROCmAvailable = false
 
-	// OpenCL is built into macOS (deprecated but available)
-	det.OpenCLAvailable = true
 
 	return det
 }

@@ -2,8 +2,10 @@ package main
 
 import (
 	"embed"
+	"io"
 	"log"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -22,11 +24,47 @@ var assets embed.FS
 //go:embed build/appicon.png
 var appIcon []byte
 
+func initLog() *os.File {
+	exe, err := os.Executable()
+	if err != nil {
+		return nil
+	}
+	logPath := filepath.Join(filepath.Dir(exe), "run.log")
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return nil
+	}
+	log.SetOutput(io.MultiWriter(f, os.Stderr))
+	log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds)
+	return f
+}
+
 func main() {
+	if logFile := initLog(); logFile != nil {
+		defer logFile.Close()
+	}
 	historyService := services.NewHistoryService()
 	modelService := services.NewModelService()
 	presetService := services.NewPresetService(historyService, modelService)
-	settingsService := services.NewSettingsService()
+	settingsService := services.NewSettingsService(modelService)
+
+	// Register hot-reload callback: when a GPU backend DLL is downloaded,
+	// flush engine caches and switch the active backend without restart.
+	services.SetOnBackendInstalled(func(backendID string) {
+		presetService.FlushEngines()
+		cfg, _ := config.Load()
+		cfg.Backend = backendID
+		_ = config.Save(cfg)
+		presetService.ReloadConfig()
+		log.Printf("Backend hot-switched to %q", backendID)
+	})
+
+	// When the user changes backend in Settings, flush cached engines and reload config.
+	services.SetOnBackendChanged(func() {
+		presetService.FlushEngines()
+		presetService.ReloadConfig()
+		log.Printf("Backend changed via Settings: engines flushed")
+	})
 
 	go func() {
 		if err := presetService.Init(); err != nil {

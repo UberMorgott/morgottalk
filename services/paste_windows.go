@@ -96,14 +96,14 @@ func winClipRead() (string, bool) {
 // keyInput matches the C INPUT struct layout for keyboard events on x64.
 // Total size: 40 bytes (matches sizeof(INPUT) on 64-bit Windows).
 type keyInput struct {
-	inputType uint32   // INPUT_KEYBOARD = 1
-	_         uint32   // alignment padding
-	wVk       uint16   // virtual key code
-	wScan     uint16   // scan code
-	dwFlags   uint32   // KEYEVENTF_KEYUP etc.
-	time      uint32   // timestamp (0 = system)
-	dwExtra   uintptr  // extra info
-	_pad      [8]byte  // pad union to MOUSEINPUT size
+	inputType uint32  // INPUT_KEYBOARD = 1
+	_         uint32  // alignment padding
+	wVk       uint16  // virtual key code
+	wScan     uint16  // scan code
+	dwFlags   uint32  // KEYEVENTF_KEYUP etc.
+	time      uint32  // timestamp (0 = system)
+	dwExtra   uintptr // extra info
+	_pad      [8]byte // pad union to MOUSEINPUT size
 }
 
 // winSendCtrlV simulates Ctrl+V using SendInput (kernel-level, instant).

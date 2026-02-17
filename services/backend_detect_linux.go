@@ -59,8 +59,6 @@ func detectGPU() gpuDetection {
 		det.ROCmAvailable = ldconfigHas("libamdhip64.so") || fileExists("/opt/rocm/lib/libamdhip64.so")
 	}
 
-	// Detect OpenCL runtime
-	det.OpenCLAvailable = ldconfigHas("libOpenCL.so")
 
 	// Detect package manager
 	det.PackageManager = detectPackageManager()

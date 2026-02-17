@@ -12,6 +12,7 @@
   import PresetEditor from '../components/PresetEditor.svelte';
   import SettingsModal from '../components/SettingsModal.svelte';
   import ModelModal from '../components/ModelModal.svelte';
+  import OnboardingWizard from '../components/OnboardingWizard.svelte';
   import Toast from '../components/Toast.svelte';
 
   type Preset = {
@@ -29,15 +30,20 @@
   let downloading: Record<string, number> = {};
   let modelsDir = '';
   let languages: { code: string; name: string }[] = [];
-  let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string }[] = [];
+  let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number }[] = [];
   let backend = 'auto';
+  let onboardingDone = true; // assume done until loaded (prevents flash)
 
-  // Theme & language state — read localStorage to match index.html inline script
+  // Theme — read localStorage synchronously, apply immediately to prevent flash
   let theme: 'dark' | 'light' = (() => {
     try {
       const t = localStorage.getItem('morgottalk-theme');
-      if (t === 'light') return 'light' as const;
+      if (t === 'light') {
+        document.documentElement.setAttribute('data-theme', 'light');
+        return 'light' as const;
+      }
     } catch {}
+    document.documentElement.setAttribute('data-theme', 'dark');
     return 'dark' as const;
   })();
   let uiLang: Lang = 'en';
@@ -49,6 +55,10 @@
   let showSettings = false;
   let showModels = false;
   let creatingPreset = false;
+  let wizardModels = false; // models opened from wizard — hide wizard while modal is open
+
+  // Onboarding settings snapshot (passed to wizard)
+  let onboardingSettings = { microphoneId: '', modelsDir: '', theme: 'dark', uiLang: 'en', closeAction: '', autoStart: false, startMinimized: false, backend: 'auto', onboardingDone: false };
 
   // Expandable card state
   let expandedPresetId: string | null = null;
@@ -57,73 +67,96 @@
   let listEl: HTMLElement;
   let sortable: Sortable;
 
+  // Transcription progress: presetId → "2/5"
+  let transcriptionProgress: Record<string, string> = {};
+
   // Polling for state updates
   let stateInterval: ReturnType<typeof setInterval>;
 
   // Diagnostic state
   let diagnosticMessage = '';
   let diagnosticType: 'error' | 'warning' | 'info' = 'info';
+  let diagnosticAction: (() => void) | null = null;
 
-  function showDiagnostic(type: 'error' | 'warning' | 'info', message: string) {
+  function showDiagnostic(type: 'error' | 'warning' | 'info', message: string, action?: () => void) {
     diagnosticType = type;
     diagnosticMessage = message;
+    diagnosticAction = action || null;
   }
 
-  onMount(async () => {
-    await refreshAll();
+  onMount(() => {
+    void (async () => {
+      await refreshAll();
 
-    // First-run diagnostics
-    try {
-      const sysInfo = await GetSystemInfo();
-
-      if (sysInfo.microphoneCount === 0) {
-        showDiagnostic('warning', t(uiLang, 'diag_no_microphone'));
-      } else if (sysInfo.modelsCount === 0 && presets.length > 0) {
-        showDiagnostic('warning', t(uiLang, 'diag_no_models'));
-      } else if (backend === 'cpu') {
-        const gpuBackend = sysInfo.backends.find(b =>
-          b.systemAvailable && b.id !== 'cpu' && b.id !== 'auto'
-        );
-        if (gpuBackend) {
-          const gpuName = gpuBackend.gpuDetected || gpuBackend.name;
-          showDiagnostic('info',
-            t(uiLang, 'diag_gpu_available').replace('{gpu}', gpuName)
-          );
-        }
-      }
-    } catch (e) {
-      console.error('Failed to get system info:', e);
-    }
-
-    // Poll recording states
-    stateInterval = setInterval(async () => {
+      // First-run diagnostics
       try {
-        const stateList = await GetRecordingStates() || [];
-        const newStates: Record<string, string> = {};
-        for (const s of stateList) {
-          newStates[s.id] = s.state;
-        }
-        states = newStates;
-      } catch {}
-    }, 500);
+        const sysInfo = await GetSystemInfo();
 
-    Events.On('model:download:progress', (event: any) => {
-      const data = event.data?.[0] || event.data || event;
-      if (data.modelName) {
-        if (data.done) {
-          delete downloading[data.modelName];
-          downloading = downloading;
-          refreshModels();
-        } else {
-          downloading[data.modelName] = data.percent || 0;
-          downloading = downloading;
+        if (presets.length > 0) {
+          if (sysInfo.microphoneCount === 0) {
+            showDiagnostic('warning', t(uiLang, 'diag_no_microphone'), () => { showSettings = true; });
+          } else if (sysInfo.modelsCount === 0) {
+            showDiagnostic('warning', t(uiLang, 'diag_no_models'), () => { showModels = true; });
+          } else if (backend === 'cpu') {
+            const gpuBackend = sysInfo.backends.find(b =>
+              b.systemAvailable && b.id !== 'cpu' && b.id !== 'auto'
+            );
+            if (gpuBackend) {
+              const gpuName = gpuBackend.gpuDetected || gpuBackend.name;
+              showDiagnostic('info',
+                t(uiLang, 'diag_gpu_available').replace('{gpu}', gpuName),
+                () => { showSettings = true; }
+              );
+            }
+          }
         }
+      } catch (e) {
+        console.error('Failed to get system info:', e);
       }
-    });
 
-    // Init SortableJS after DOM renders
-    await tick();
-    initSortable();
+      // Poll recording states
+      stateInterval = setInterval(async () => {
+        try {
+          const stateList = await GetRecordingStates() || [];
+          const newStates: Record<string, string> = {};
+          for (const s of stateList) {
+            newStates[s.id] = s.state;
+            // Clear progress when preset goes idle
+            if (s.state === 'idle' && transcriptionProgress[s.id]) {
+              delete transcriptionProgress[s.id];
+              transcriptionProgress = transcriptionProgress;
+            }
+          }
+          states = newStates;
+        } catch {}
+      }, 500);
+
+      Events.On('transcription:progress', (event: any) => {
+        const data = event.data?.[0] || event.data || event;
+        if (data.presetId && data.total > 1) {
+          transcriptionProgress[data.presetId] = `${data.current}/${data.total}`;
+          transcriptionProgress = transcriptionProgress;
+        }
+      });
+
+      Events.On('model:download:progress', (event: any) => {
+        const data = event.data?.[0] || event.data || event;
+        if (data.modelName) {
+          if (data.done) {
+            delete downloading[data.modelName];
+            downloading = downloading;
+            refreshModels();
+          } else {
+            downloading[data.modelName] = data.percent || 0;
+            downloading = downloading;
+          }
+        }
+      });
+
+      // Init SortableJS after DOM renders
+      await tick();
+      initSortable();
+    })();
 
     return () => {
       clearInterval(stateInterval);
@@ -151,6 +184,8 @@
         autoStart = gs.autoStart || false;
         startMinimized = gs.startMinimized || false;
         backend = gs.backend || 'auto';
+        onboardingDone = gs.onboardingDone || false;
+        onboardingSettings = { microphoneId: gs.microphoneId || '', modelsDir: gs.modelsDir || '', theme: gs.theme || 'dark', uiLang: gs.uiLang || 'en', closeAction: gs.closeAction || '', autoStart: gs.autoStart || false, startMinimized: gs.startMinimized || false, backend: gs.backend || 'auto', onboardingDone: gs.onboardingDone || false };
         document.documentElement.setAttribute('data-theme', theme);
         try { localStorage.setItem('morgottalk-theme', theme); } catch {}
       }
@@ -270,6 +305,24 @@
     downloading = downloading;
   }
 
+  // Onboarding done handler
+  async function handleOnboardingDone(e: CustomEvent<{ uiLang: string; theme: string; backend: string; microphoneId: string }>) {
+    onboardingDone = true;
+    await refreshAll();
+  }
+
+  // Post-onboarding hint banners
+  $: hintNoHotkey = onboardingDone && presets.length > 0 && presets.some(p => !p.hotkey);
+  $: hintNoModel = onboardingDone && presets.length > 0 && models.filter(m => m.downloaded).length === 0;
+
+  function openPresetForHotkey() {
+    const p = presets.find(p => !p.hotkey);
+    if (p) {
+      expandedPresetId = p.id;
+      loadLanguagesForModel(p.modelName);
+    }
+  }
+
   // Recording state helpers
   $: recordingPreset = presets.find(p => states[p.id] === 'recording');
   $: processingPreset = presets.find(p => states[p.id] === 'processing');
@@ -346,8 +399,9 @@
   </div>
 
   <!-- Status bar with diagnostics -->
-  {#if diagnosticMessage}
-    <div class="status-bar">
+  {#if diagnosticMessage && !showSettings && !showModels && onboardingDone}
+    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+    <div class="status-bar" class:status-bar-clickable={!!diagnosticAction} on:click={() => { if (diagnosticAction) { diagnosticAction(); diagnosticMessage = ''; } }}>
       <Toast
         type={diagnosticType}
         message={diagnosticMessage}
@@ -355,6 +409,28 @@
         on:dismiss={() => diagnosticMessage = ''}
       />
     </div>
+  {/if}
+
+  <!-- Post-onboarding hint banners -->
+  {#if !showSettings && !showModels && !creatingPreset}
+    {#if hintNoHotkey}
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+      <div class="hint-bar hint-warning" on:click={openPresetForHotkey}>
+        <svg class="hint-icon" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+        </svg>
+        <span>{t(uiLang, 'hint_no_hotkey')}</span>
+      </div>
+    {/if}
+    {#if hintNoModel}
+      <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+      <div class="hint-bar hint-info" on:click={() => showModels = true}>
+        <svg class="hint-icon" viewBox="0 0 20 20" fill="currentColor">
+          <path fill-rule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clip-rule="evenodd"/>
+        </svg>
+        <span>{t(uiLang, 'hint_no_model')}</span>
+      </div>
+    {/if}
   {/if}
 
   <!-- Centered content column -->
@@ -373,6 +449,7 @@
             <PresetCard
               {preset}
               state={states[preset.id] || 'idle'}
+              progress={transcriptionProgress[preset.id] || ''}
               lang={uiLang}
               {models}
               {languages}
@@ -428,6 +505,7 @@
     {startMinimized}
     {backend}
     {backends}
+    {onboardingDone}
     on:change={handleSettingsChange}
     on:close={() => showSettings = false}
     on:openModels={() => { showSettings = false; showModels = true; }}
@@ -440,11 +518,24 @@
     {downloading}
     {modelsDir}
     lang={uiLang}
-    on:close={() => showModels = false}
+    on:close={() => { showModels = false; wizardModels = false; }}
     on:download={handleDownload}
     on:delete={handleModelDelete}
     on:cancel={handleCancel}
   />
+{/if}
+
+{#if !onboardingDone}
+  <div style={wizardModels ? 'display:none' : ''}>
+    <OnboardingWizard
+      {microphones}
+      {backends}
+      {models}
+      settings={onboardingSettings}
+      on:done={handleOnboardingDone}
+      on:openModels={() => { wizardModels = true; showModels = true; }}
+    />
+  </div>
 {/if}
 
 <style>
@@ -479,6 +570,9 @@
     max-width: 680px;
     margin: 0 auto;
     width: 100%;
+  }
+  .status-bar-clickable {
+    cursor: pointer;
   }
 
   .app-title {
@@ -603,5 +697,32 @@
     color: var(--accent);
     border-color: var(--border-active);
     background: var(--accent-dim);
+  }
+
+  /* -- Hint banners -- */
+  .hint-bar {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px clamp(16px, 4vw, 48px);
+    max-width: 680px;
+    width: 100%;
+    margin: 0 auto;
+    font-size: 13px;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .hint-bar:hover { opacity: 0.8; }
+  .hint-warning {
+    color: #f59e0b;
+  }
+  .hint-info {
+    color: var(--accent);
+  }
+  .hint-icon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
   }
 </style>

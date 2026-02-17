@@ -14,7 +14,8 @@
   export let autoStart: boolean = false;
   export let startMinimized: boolean = false;
   export let backend: string = 'auto';
-  export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string }[] = [];
+  export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number }[] = [];
+  export let onboardingDone: boolean = true;
 
   const dispatch = createEventDispatcher<{
     change: { microphoneId: string; modelsDir: string; theme: 'dark' | 'light'; uiLang: Lang; closeAction: string; autoStart: boolean; startMinimized: boolean; backend: string };
@@ -33,7 +34,7 @@
   let installingBackend = '';
   let backendMessage = '';
   let installProgress: number | null = null;
-  let installStage: 'downloading' | 'installing' | '' = '';
+  let installStage: 'downloading' | 'installing' | 'downloading_runtime' | 'installing_runtime' | '' = '';
   let installStageText = '';
   let showRestartButton = false;
   let initialized = false;
@@ -77,26 +78,21 @@
         installStageText = '';
         if (d.error) {
           backendMessage = d.error;
-          showRestartButton = false;
         } else {
-          backendMessage = t(displayLang, 'backendInstalled');
-          showRestartButton = true;
+          backendMessage = t(displayLang, 'backendInstallDone');
+          // Backend was hot-loaded — auto-switch without restart.
+          localBackend = d.backendId;
         }
+        showRestartButton = false;
         installingBackend = '';
-        // Check if backend is now available without restart (env was refreshed in Go).
+        // Refresh backend list to reflect new availability.
         GetAllBackends().then(b => {
           backends = b || [];
-          const target = b?.find((x: any) => x.id === d.backendId);
-          if (target && target.compiled && target.systemAvailable) {
-            backendMessage = t(displayLang, 'backendInstallDone');
-            showRestartButton = false;
-            localBackend = d.backendId;
-          }
         });
       } else {
         installStage = d.stage || 'downloading';
         installStageText = d.stageText || '';
-        installProgress = d.stage === 'installing' ? null : (d.percent || 0);
+        installProgress = (d.stage === 'installing' || d.stage === 'installing_runtime') ? null : (d.percent || 0);
       }
     });
   });
@@ -109,7 +105,7 @@
   $: if (initialized) {
     document.documentElement.setAttribute('data-theme', localTheme);
     try { localStorage.setItem('morgottalk-theme', localTheme); } catch {}
-    const detail = { microphoneId: localMicId, modelsDir: localModelsDir, theme: localTheme, uiLang: localLang, closeAction: localCloseAction, autoStart: localAutoStart, startMinimized: localStartMinimized, backend: localBackend };
+    const detail = { microphoneId: localMicId, modelsDir: localModelsDir, theme: localTheme, uiLang: localLang, closeAction: localCloseAction, autoStart: localAutoStart, startMinimized: localStartMinimized, backend: localBackend, onboardingDone };
     SaveGlobalSettings(detail).catch(() => {});
     dispatch('change', detail);
   }
@@ -132,19 +128,14 @@
   }
 
   async function handleBackendClick(b: typeof backends[0]) {
-    // Usable: compiled and system available
+    // Usable: compiled and system available — just select it.
     if (b.compiled && b.systemAvailable) {
       localBackend = b.id;
       backendMessage = '';
       return;
     }
-    // Not compiled: show info message
-    if (b.unavailableReason === 'not_compiled') {
-      backendMessage = t(displayLang, 'backend_reason_not_compiled');
-      return;
-    }
-    // Can install: trigger install
-    if (b.canInstall) {
+    // Can install (runtime missing or DLL missing) — trigger install + download.
+    if (b.canInstall || b.unavailableReason === 'not_compiled') {
       installingBackend = b.id;
       backendMessage = '';
       try {
@@ -152,11 +143,11 @@
         if (result === 'url') {
           backendMessage = t(displayLang, 'backendUrlOpened');
         } else if (result === 'installing') {
-          backendMessage = t(displayLang, 'backendInstallerLaunched');
+          // Async flow — progress events will update UI.
+          return;
         } else {
           backendMessage = t(displayLang, 'backendInstalled');
         }
-        // Refresh backends to pick up new availability
         backends = await GetAllBackends() || [];
       } catch (e: any) {
         backendMessage = e?.message || String(e);
@@ -173,15 +164,35 @@
   }
 
   function backendTooltip(b: typeof backends[0]): string {
-    if (b.compiled && b.systemAvailable) return b.name;
-    if (b.unavailableReason === 'not_compiled') {
-      const gpu = b.gpuDetected ? ` (${b.gpuDetected})` : '';
-      return `${t(displayLang, 'backend_reason_not_compiled')}${gpu}`;
+    if (b.compiled && b.systemAvailable) {
+      return b.recommended ? `${b.name} — ${t(displayLang, 'backendRecommended')}` : b.name;
     }
-    if (b.canInstall && !b.compiled) return `${b.installHint} — ${t(displayLang, 'backendNeedsRebuild')}`;
-    if (b.canInstall) return `${t(displayLang, 'backendInstalling').replace('...', '')}: ${b.installHint}`;
+    if (b.canInstall || b.unavailableReason === 'not_compiled') {
+      const gpu = b.gpuDetected ? ` (${b.gpuDetected})` : '';
+      const size = b.downloadSizeMB > 0 ? ` · ~${b.downloadSizeMB} ${t(displayLang, 'mb')}` : '';
+      return `${t(displayLang, 'backendClickToDownload')}${gpu}${size}`;
+    }
     return t(displayLang, 'backendNotAvailable');
   }
+
+  function backendHardwareLabel(id: string): string {
+    switch (id) {
+      case 'cuda': return 'NVIDIA';
+      case 'vulkan': return t(displayLang, 'backendHwAnyGPU');
+      case 'metal': return 'Apple';
+      case 'cpu': return t(displayLang, 'backendHwProcessor');
+      default: return '';
+    }
+  }
+
+  $: recommendedBackend = visibleBackends.find(b => b.recommended);
+
+  // When Auto is selected, determine which backend it actually uses.
+  $: autoResolvedId = localBackend === 'auto'
+    ? (visibleBackends.find(b => b.recommended && b.compiled && b.systemAvailable)?.id
+      || visibleBackends.find(b => b.compiled && b.systemAvailable && b.id !== 'auto' && b.id !== 'cpu')?.id
+      || 'cpu')
+    : null;
 </script>
 
 <svelte:window on:keydown={onKeydown} />
@@ -204,29 +215,30 @@
     <div class="modal-body">
       <!-- Backend -->
       <div class="field" title={t(displayLang, 'tip_backend')}>
+        <!-- svelte-ignore a11y-label-has-associated-control -->
         <label class="field-label">{t(displayLang, 'backend')}</label>
         <div class="backend-group">
           {#each visibleBackends as b}
             <button
               class="backend-pill"
-              class:backend-active={localBackend === b.id && (b.compiled && b.systemAvailable)}
-              class:backend-unavailable={!(b.compiled && b.systemAvailable) && b.unavailableReason !== 'not_compiled'}
-              class:backend-not-compiled={b.unavailableReason === 'not_compiled'}
-              class:backend-installable={b.canInstall && !(b.compiled && b.systemAvailable)}
+              class:backend-active={(localBackend === b.id || (localBackend === 'auto' && b.id === 'auto')) && (b.compiled && b.systemAvailable)}
+              class:backend-auto-resolved={autoResolvedId === b.id && b.id !== 'auto'}
+              class:backend-unavailable={!(b.compiled && b.systemAvailable) && !b.canInstall && b.unavailableReason !== 'not_compiled'}
+              class:backend-installable={(b.canInstall || b.unavailableReason === 'not_compiled') && !(b.compiled && b.systemAvailable)}
               class:backend-installing={installingBackend === b.id}
               disabled={!(b.compiled && b.systemAvailable) && !b.canInstall && b.unavailableReason !== 'not_compiled'}
               on:click={() => handleBackendClick(b)}
               title={backendTooltip(b)}
             >
               {#if installingBackend === b.id}
-                {#if installStage === 'downloading' && installProgress !== null}
+                {#if (installStage === 'downloading' || installStage === 'downloading_runtime') && installProgress !== null}
                   <svg class="progress-ring" width="14" height="14" viewBox="0 0 14 14">
                     <circle class="progress-ring-bg" cx="7" cy="7" r="5" />
                     <circle class="progress-ring-fill" cx="7" cy="7" r="5"
                       stroke-dasharray={31.4}
                       stroke-dashoffset={31.4 * (1 - installProgress / 100)} />
                   </svg>
-                {:else if installStage === 'installing'}
+                {:else if installStage === 'installing' || installStage === 'installing_runtime'}
                   <svg class="progress-ring progress-ring-pulse" width="14" height="14" viewBox="0 0 14 14">
                     <circle class="progress-ring-bg" cx="7" cy="7" r="5" />
                     <circle class="progress-ring-fill" cx="7" cy="7" r="5"
@@ -236,14 +248,55 @@
                 {:else}
                   <span class="spinner"></span>
                 {/if}
+              {:else if (b.canInstall || b.unavailableReason === 'not_compiled') && !(b.compiled && b.systemAvailable)}
+                <!-- Download icon for installable backends -->
+                <svg class="backend-icon backend-icon-download" width="12" height="12" viewBox="0 0 12 12">
+                  <path d="M6 2v6M3.5 5.5L6 8l2.5-2.5M2 10h8" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
               {/if}
-              {b.name}
+              <!-- Name + hardware tag -->
+              <span class="backend-name">{b.name}</span>
+              {#if b.id !== 'auto' && b.id !== 'cpu'}
+                <span class="backend-hw-tag" class:hw-nvidia={b.id === 'cuda'} class:hw-universal={b.id === 'vulkan'} class:hw-apple={b.id === 'metal'}>{backendHardwareLabel(b.id)}</span>
+              {/if}
+              <!-- Recommended star -->
+              {#if b.recommended}
+                <span class="backend-star" title={t(displayLang, 'backendRecommended')}>&#9733;</span>
+              {/if}
+              <!-- Auto-resolved indicator -->
+              {#if autoResolvedId === b.id && b.id !== 'auto'}
+                <span class="backend-auto-badge">&#8592; auto</span>
+              {/if}
+              <!-- Download size -->
+              {#if !b.compiled && b.downloadSizeMB > 0 && installingBackend !== b.id}
+                <span class="backend-size">~{b.downloadSizeMB}{t(displayLang, 'mb')}</span>
+              {/if}
             </button>
           {/each}
         </div>
-        {#if installStage === 'downloading' && installProgress !== null}
-          <div class="backend-message">{t(displayLang, 'backendDownloading')} {Math.round(installProgress)}%</div>
-        {:else if installStage === 'installing'}
+        <!-- Recommendation line -->
+        {#if recommendedBackend && !recommendedBackend.compiled}
+          <div class="backend-recommend-line">
+            &#9733; {t(displayLang, 'backendRecommendedHint')}{#if recommendedBackend.gpuDetected}: {recommendedBackend.gpuDetected}{/if}
+          </div>
+        {/if}
+        <!-- CUDA driver hint — clickable link to NVIDIA driver page -->
+        {#if visibleBackends.some(b => b.installHint === 'cuda_driver_525' && !b.compiled)}
+          <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+          <div class="backend-driver-link" on:click={() => window.open('https://www.nvidia.com/download/index.aspx')}>
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+              <path d="M6 1v4.5m0 0L3.5 3M6 5.5L8.5 3M1 8l1.5 2h7L11 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            {t(displayLang, 'backendCudaDriverHint')}
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style="opacity:0.6">
+              <path d="M3 1h6v6M9 1L4 6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        {/if}
+        <!-- Download progress / messages -->
+        {#if (installStage === 'downloading' || installStage === 'downloading_runtime') && installProgress !== null}
+          <div class="backend-message">{t(displayLang, installStage === 'downloading_runtime' ? 'backendDownloadingRuntime' : 'backendDownloading')} {Math.round(installProgress)}%</div>
+        {:else if installStage === 'installing' || installStage === 'installing_runtime'}
           <div class="backend-message">{installStageText || t(displayLang, 'backendInstalling')}</div>
         {:else if backendMessage}
           <div class="backend-message">
@@ -257,6 +310,7 @@
 
       <!-- Theme -->
       <div class="field" title={t(displayLang, 'tip_theme')}>
+        <!-- svelte-ignore a11y-label-has-associated-control -->
         <label class="field-label">{t(displayLang, 'theme')}</label>
         <div class="pill-group">
           <button
@@ -274,8 +328,8 @@
 
       <!-- UI Language -->
       <div class="field" title={t(displayLang, 'tip_uiLanguage')}>
-        <label class="field-label">{t(displayLang, 'uiLanguage')}</label>
-        <select class="field-select" bind:value={localLang}>
+        <label class="field-label" for="settings-ui-lang">{t(displayLang, 'uiLanguage')}</label>
+        <select id="settings-ui-lang" class="field-select" bind:value={localLang}>
           {#each langOptions as opt}
             <option value={opt.code}>{opt.label}</option>
           {/each}
@@ -284,6 +338,7 @@
 
       <!-- Close Action -->
       <div class="field" title={t(displayLang, 'tip_closeAction')}>
+        <!-- svelte-ignore a11y-label-has-associated-control -->
         <label class="field-label">{t(displayLang, 'closeAction')}</label>
         <div class="pill-group">
           <button
@@ -302,6 +357,7 @@
       <!-- Auto Start + Start Minimized -->
       <div class="field-row">
         <div class="field" title={t(displayLang, 'tip_autoStart')}>
+          <!-- svelte-ignore a11y-label-has-associated-control -->
           <label class="field-label">{t(displayLang, 'autoStart')}</label>
           <div class="pill-group">
             <button
@@ -317,6 +373,7 @@
           </div>
         </div>
         <div class="field" title={t(displayLang, 'tip_startMinimized')}>
+          <!-- svelte-ignore a11y-label-has-associated-control -->
           <label class="field-label">{t(displayLang, 'startMinimized')}</label>
           <div class="pill-group">
             <button
@@ -335,8 +392,8 @@
 
       <!-- Microphone -->
       <div class="field" title={t(displayLang, 'tip_microphone')}>
-        <label class="field-label">{t(displayLang, 'microphone')}</label>
-        <select class="field-select" bind:value={localMicId}>
+        <label class="field-label" for="settings-mic">{t(displayLang, 'microphone')}</label>
+        <select id="settings-mic" class="field-select" bind:value={localMicId}>
           <option value="">{t(displayLang, 'default_mic')}</option>
           {#each microphones as mic}
             <option value={mic.id}>{mic.name}{mic.isDefault ? ' *' : ''}</option>
@@ -346,6 +403,7 @@
 
       <!-- Models Directory -->
       <div class="field" title={t(displayLang, 'tip_modelsDir')}>
+        <!-- svelte-ignore a11y-label-has-associated-control -->
         <label class="field-label">{t(displayLang, 'modelsDirectory')}</label>
         <div class="dir-row">
           <input class="dir-input" type="text" readonly value={localModelsDir} />
@@ -355,6 +413,7 @@
 
       <!-- Models -->
       <div class="field">
+        <!-- svelte-ignore a11y-label-has-associated-control -->
         <label class="field-label">{t(displayLang, 'models')}</label>
         <button class="models-btn" on:click={() => dispatch('openModels')} title={t(displayLang, 'tip_manageModels')}>
           <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -470,16 +529,6 @@
     opacity: 0.35;
     cursor: not-allowed;
   }
-  .backend-pill.backend-not-compiled {
-    opacity: 0.5;
-    cursor: help;
-    border-style: dotted;
-  }
-  .backend-pill.backend-not-compiled:hover {
-    opacity: 0.7;
-    color: var(--text-secondary);
-    border-color: var(--border-hover);
-  }
   .backend-pill.backend-installable {
     opacity: 0.55;
     cursor: pointer;
@@ -493,6 +542,76 @@
   .backend-pill.backend-installing {
     opacity: 0.7;
     cursor: wait;
+  }
+
+  /* Auto-resolved backend highlight */
+  .backend-pill.backend-auto-resolved {
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    border-style: solid;
+    opacity: 1;
+  }
+
+  /* "← auto" badge */
+  .backend-auto-badge {
+    font-size: 8px;
+    opacity: 0.5;
+    font-style: italic;
+  }
+
+  /* Backend status icons */
+  .backend-icon { flex-shrink: 0; }
+  .backend-icon-download { color: var(--accent); opacity: 0.7; }
+
+  /* Hardware type tags */
+  .backend-hw-tag {
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    padding: 1px 4px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+  .hw-nvidia { background: #76b900; color: #fff; }
+  .hw-universal { background: #3b82f6; color: #fff; }
+  .hw-apple { background: #a3a3a3; color: #fff; }
+
+  /* Recommended star */
+  .backend-star {
+    color: #f59e0b;
+    font-size: 11px;
+    line-height: 1;
+  }
+
+  /* Download size badge */
+  .backend-size {
+    font-size: 9px;
+    opacity: 0.6;
+    font-family: ui-monospace, monospace;
+  }
+
+  /* Recommendation line */
+  .backend-recommend-line {
+    font-size: 11px;
+    color: #f59e0b;
+    padding: 3px 0 0;
+  }
+
+  .backend-driver-link {
+    font-size: 11px;
+    color: var(--accent);
+    padding: 4px 0 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    text-decoration: underline;
+    text-decoration-style: dashed;
+    text-underline-offset: 2px;
+    transition: opacity 0.2s;
+  }
+  .backend-driver-link:hover {
+    opacity: 0.8;
   }
 
   .backend-message {

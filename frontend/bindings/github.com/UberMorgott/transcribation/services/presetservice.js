@@ -56,6 +56,15 @@ export function DeletePreset(id) {
 }
 
 /**
+ * FlushEngines closes all cached whisper engines so they are recreated
+ * with new settings (e.g. after a GPU backend is installed).
+ * @returns {$CancellablePromise<void>}
+ */
+export function FlushEngines() {
+    return $Call.ByID(3234307506);
+}
+
+/**
  * GetLastText returns the last transcription result.
  * @returns {$CancellablePromise<string>}
  */
@@ -65,6 +74,8 @@ export function GetLastText() {
 
 /**
  * GetModelLanguages returns available languages for a specific model.
+ * If the model is loaded in any engine, uses whisper_is_multilingual from the C API.
+ * Otherwise falls back to checking the model name for ".en" suffix.
  * @param {string} modelName
  * @returns {$CancellablePromise<$models.LanguageInfo[]>}
  */

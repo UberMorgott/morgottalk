@@ -25,15 +25,16 @@ type Preset struct {
 
 // AppConfig holds the global application settings and presets.
 type AppConfig struct {
-	MicrophoneID string   `json:"microphoneId"`
-	ModelsDir    string   `json:"modelsDir"`
-	Theme        string   `json:"theme"`       // "dark" | "light"
-	UILang       string   `json:"uiLang"`      // "en" | "ru"
-	CloseAction  string   `json:"closeAction"` // "" = ask, "tray", "quit"
+	MicrophoneID   string   `json:"microphoneId"`
+	ModelsDir      string   `json:"modelsDir"`
+	Theme          string   `json:"theme"`       // "dark" | "light"
+	UILang         string   `json:"uiLang"`      // "en" | "ru"
+	CloseAction    string   `json:"closeAction"` // "" = ask, "tray", "quit"
 	AutoStart      bool     `json:"autoStart"`
 	StartMinimized bool     `json:"startMinimized"`
-	Backend        string   `json:"backend"` // "auto", "cpu", "cuda", "vulkan", "metal", "rocm", "opencl"
-	Presets      []Preset `json:"presets"`
+	Backend        string   `json:"backend"` // "auto", "cpu", "cuda", "vulkan", "metal", "rocm"
+	OnboardingDone bool     `json:"onboardingDone"`
+	Presets        []Preset `json:"presets"`
 }
 
 // DefaultPreset returns a sensible default preset.
@@ -52,19 +53,14 @@ func DefaultPreset() Preset {
 	}
 }
 
-// DefaultAppConfig returns defaults with one preset.
+// DefaultAppConfig returns defaults with no presets (onboarding will guide the user).
 func DefaultAppConfig() *AppConfig {
 	return &AppConfig{
 		Theme:   "dark",
 		UILang:  "en",
 		Backend: "auto",
-		Presets: []Preset{DefaultPreset()},
+		Presets: []Preset{},
 	}
-}
-
-// ConfigDir exports the config directory path for use by other packages.
-func ConfigDir() (string, error) {
-	return configDir()
 }
 
 // configDir returns the config directory.
@@ -163,7 +159,7 @@ func migrateOldConfig(data []byte) *AppConfig {
 		Language:        lang,
 		UseKBLayout:     false,
 		KeepHistory:     true,
-		Enabled:         false,
+		Enabled:         hotkey != "", // enable if hotkey is set
 	}
 
 	return &AppConfig{
@@ -200,6 +196,13 @@ func Load() (*AppConfig, error) {
 			return migrated, nil
 		}
 		return DefaultAppConfig(), nil
+	}
+
+	// Existing users: if they already have presets but onboarding flag is missing,
+	// consider onboarding done so we don't show the wizard to returning users.
+	if len(cfg.Presets) > 0 && !cfg.OnboardingDone {
+		cfg.OnboardingDone = true
+		_ = Save(cfg)
 	}
 
 	return cfg, nil

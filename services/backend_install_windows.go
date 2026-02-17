@@ -11,8 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 const cudaNetworkInstaller = "https://developer.download.nvidia.com/compute/cuda/13.1.1/network_installers/cuda_13.1.1_windows_network.exe"
@@ -24,63 +22,78 @@ const cudaComponents = "-s cudart_13.1 cublas_13.1"
 func installBackend(id string) (string, error) {
 	switch id {
 	case "cuda":
-		return installCUDAWindows()
+		go installBackendAsync(id)
+		return "installing", nil
 	case "vulkan":
-		return openURL("https://vulkan.lunarg.com/sdk/home#windows")
+		go installBackendAsync(id)
+		return "installing", nil
 	case "rocm":
 		return openURL("https://rocm.docs.amd.com/")
-	case "opencl":
-		return "", fmt.Errorf("OpenCL is bundled with your GPU driver; update your GPU driver to get OpenCL support")
 	default:
 		return "", fmt.Errorf("backend %q is not available on Windows", id)
 	}
 }
 
-// installCUDAWindows starts async download + silent install of CUDA runtime.
-// Stages: downloading (with %) → installing (with log monitoring) → done.
-// Same installer for Windows 10/11, all NVIDIA GPUs (Maxwell+).
-func installCUDAWindows() (string, error) {
-	go downloadAndInstallCUDA()
-	return "installing", nil
-}
-
-func downloadAndInstallCUDA() {
+// installBackendAsync handles the full async installation flow:
+// 1. Install system runtime if needed (CUDA only)
+// 2. Download the GPU backend DLL from GitHub Releases
+func installBackendAsync(id string) {
 	emit := func(stage, stageText string, pct float64, done bool, errMsg string) {
-		if app := application.Get(); app != nil {
-			app.Event.Emit("backend:install:progress", map[string]any{
-				"backendId": "cuda",
-				"stage":     stage,
-				"stageText": stageText,
-				"percent":   pct,
-				"done":      done,
-				"error":     errMsg,
-			})
+		emitBackendProgress(id, stage, stageText, pct, done, errMsg)
+	}
+
+	// Step 1: Install system runtime if needed.
+	if id == "cuda" {
+		det := detectGPU()
+		if !det.CUDAAvailable {
+			if err := installCUDARuntimeWindows(emit); err != nil {
+				emit("", "", 0, true, err.Error())
+				return
+			}
 		}
 	}
 
-	installerPath := filepath.Join(os.TempDir(), "cuda_13.1.1_windows_network.exe")
-
-	// Stage 1: Download network installer (~30 MB).
-	err := downloadFileWithProgress(cudaNetworkInstaller, installerPath, func(pct float64) {
-		emit("downloading", "", pct, false, "")
-	})
-	if err != nil {
-		emit("", "", 0, true, err.Error())
+	// Step 2: Download the backend DLL.
+	emit("downloading", "", 0, false, "")
+	if err := downloadBackendDLL(id); err != nil {
+		emit("", "", 0, true, fmt.Sprintf("Backend download failed: %v", err))
 		return
 	}
 
-	// Stage 2: Silent install with log monitoring.
-	emit("installing", "", 0, false, "")
+	// Step 3: Hot-apply — flush engine caches and switch backend.
+	if onBackendInstalled != nil {
+		onBackendInstalled(id)
+	}
 
-	// Start log watcher before launching installer.
+	emit("", "", 100, true, "")
+}
+
+// installCUDARuntimeWindows downloads and silently installs CUDA runtime components.
+func installCUDARuntimeWindows(emit func(stage, stageText string, pct float64, done bool, errMsg string)) error {
+	installerPath := filepath.Join(os.TempDir(), "cuda_13.1.1_windows_network.exe")
+
+	// Download network installer (~30 MB).
+	err := downloadFileWithProgress(cudaNetworkInstaller, installerPath, func(pct float64) {
+		emit("downloading_runtime", "", pct, false, "")
+	})
+	if err != nil {
+		return fmt.Errorf("download CUDA installer: %w", err)
+	}
+
+	// Silent install with log monitoring.
+	emit("installing_runtime", "", 0, false, "")
+
 	logDone := make(chan struct{})
 	go watchCUDAInstallerLog(logDone, func(text string) {
-		emit("installing", text, 0, false, "")
+		emit("installing_runtime", text, 0, false, "")
 	})
 
-	cmd := exec.Command("powershell", "-NoProfile", "-Command",
+	// Escape single quotes for PowerShell single-quoted strings ('' = literal ').
+	escapedPath := strings.ReplaceAll(installerPath, "'", "''")
+	escapedArgs := strings.ReplaceAll(cudaComponents, "'", "''")
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command",
 		fmt.Sprintf(`Start-Process -FilePath '%s' -ArgumentList '%s' -Verb RunAs -Wait`,
-			installerPath, cudaComponents))
+			escapedPath, escapedArgs))
 	hideWindow(cmd)
 	err = cmd.Run()
 
@@ -88,14 +101,11 @@ func downloadAndInstallCUDA() {
 	os.Remove(installerPath)
 
 	if err != nil {
-		emit("", "", 0, true, fmt.Sprintf("CUDA install failed: %v", err))
-		return
+		return fmt.Errorf("CUDA install failed: %w", err)
 	}
 
-	// Update process env so CUDA is detected without restart.
 	refreshCUDAEnv()
-
-	emit("", "", 100, true, "")
+	return nil
 }
 
 // watchCUDAInstallerLog tails the CUDA installer log file and reports stage changes.

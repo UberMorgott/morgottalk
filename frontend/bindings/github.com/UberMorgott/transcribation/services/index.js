@@ -19,7 +19,6 @@ export {
     LanguageInfo,
     MicrophoneInfo,
     ModelInfo,
-    ModelService,
     PresetState,
     SystemInfo,
     TranscriptionResult

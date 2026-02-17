@@ -9,6 +9,9 @@ build/windows/nsis/MicrosoftEdgeWebview2Setup.exe
 # whisper.cpp build artifacts
 third_party/whisper.cpp/build*/
 
+# CUDA build experiments (local)
+build_cuda*/
+
 # Models (downloaded at runtime)
 models/
 *.bin
@@ -41,11 +44,15 @@ CLAUDE.md
 .copilot/
 .github/copilot*
 
+# Release output
+release/
+
 # Dev scripts
 kill.sh
 run.sh
 build_and_run.bat
 build_only.bat
+release.bat
 _build_*.txt
 _build_*.ps1
 

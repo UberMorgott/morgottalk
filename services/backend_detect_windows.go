@@ -36,8 +36,6 @@ func detectGPU() gpuDetection {
 		det.ROCmAvailable = os.Getenv("HIP_PATH") != ""
 	}
 
-	// OpenCL runtime
-	det.OpenCLAvailable = fileExists(filepath.Join(sys32, "OpenCL.dll"))
 
 	return det
 }

@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"encoding/hex"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,26 +31,39 @@ type LanguageInfo struct {
 
 // GlobalSettings holds non-preset settings.
 type GlobalSettings struct {
-	MicrophoneID string `json:"microphoneId"`
-	ModelsDir    string `json:"modelsDir"`
-	Theme        string `json:"theme"`
-	UILang       string `json:"uiLang"`
-	CloseAction  string `json:"closeAction"`
+	MicrophoneID   string `json:"microphoneId"`
+	ModelsDir      string `json:"modelsDir"`
+	Theme          string `json:"theme"`
+	UILang         string `json:"uiLang"`
+	CloseAction    string `json:"closeAction"`
 	AutoStart      bool   `json:"autoStart"`
 	StartMinimized bool   `json:"startMinimized"`
 	Backend        string `json:"backend"`
+	OnboardingDone bool   `json:"onboardingDone"`
 }
 
-// SettingsService provides global settings management to the frontend.
-type SettingsService struct{}
+// onBackendChanged is called when the user changes the backend in Settings.
+var onBackendChanged func()
 
-func NewSettingsService() *SettingsService {
-	return &SettingsService{}
+// SetOnBackendChanged registers a callback invoked when the backend setting changes.
+// Use to flush engine caches and reload config in PresetService.
+func SetOnBackendChanged(fn func()) { onBackendChanged = fn }
+
+// SettingsService provides global settings management to the frontend.
+type SettingsService struct {
+	models *ModelService
+}
+
+func NewSettingsService(models *ModelService) *SettingsService {
+	return &SettingsService{models: models}
 }
 
 // GetGlobalSettings returns the global (non-preset) settings.
 func (s *SettingsService) GetGlobalSettings() GlobalSettings {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Warn("failed to load config", "err", err)
+	}
 	backend := cfg.Backend
 	if backend == "" {
 		backend = "auto"
@@ -63,13 +77,18 @@ func (s *SettingsService) GetGlobalSettings() GlobalSettings {
 		AutoStart:      cfg.AutoStart,
 		StartMinimized: cfg.StartMinimized,
 		Backend:        backend,
+		OnboardingDone: cfg.OnboardingDone,
 	}
 }
 
 // SaveGlobalSettings saves the global settings.
 func (s *SettingsService) SaveGlobalSettings(gs GlobalSettings) error {
-	cfg, _ := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Warn("failed to load config", "err", err)
+	}
 	autoStartChanged := cfg.AutoStart != gs.AutoStart
+	backendChanged := cfg.Backend != gs.Backend
 	cfg.MicrophoneID = gs.MicrophoneID
 	cfg.ModelsDir = gs.ModelsDir
 	cfg.Theme = gs.Theme
@@ -78,15 +97,23 @@ func (s *SettingsService) SaveGlobalSettings(gs GlobalSettings) error {
 	cfg.AutoStart = gs.AutoStart
 	cfg.StartMinimized = gs.StartMinimized
 	cfg.Backend = gs.Backend
+	cfg.OnboardingDone = gs.OnboardingDone
 	if err := config.Save(cfg); err != nil {
 		return err
+	}
+	if backendChanged && onBackendChanged != nil {
+		go onBackendChanged()
 	}
 	if autoStartChanged {
 		a := autostartApp()
 		if gs.AutoStart {
-			_ = a.Enable()
+			if err := a.Enable(); err != nil {
+				slog.Warn("failed to enable autostart", "err", err)
+			}
 		} else {
-			_ = a.Disable()
+			if err := a.Disable(); err != nil {
+				slog.Warn("failed to disable autostart", "err", err)
+			}
 		}
 	}
 	return nil
@@ -181,9 +208,9 @@ type SystemInfo struct {
 }
 
 // GetSystemInfo returns diagnostic information about the system.
-func (s *SettingsService) GetSystemInfo(models *ModelService) SystemInfo {
+func (s *SettingsService) GetSystemInfo() SystemInfo {
 	mics, _ := s.GetMicrophones()
-	availableModels := models.GetAvailableModels()
+	availableModels := s.models.GetAvailableModels()
 
 	downloadedCount := 0
 	for _, m := range availableModels {

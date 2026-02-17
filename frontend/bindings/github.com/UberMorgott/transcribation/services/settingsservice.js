@@ -47,11 +47,10 @@ export function GetMicrophones() {
 
 /**
  * GetSystemInfo returns diagnostic information about the system.
- * @param {$models.ModelService | null} models
  * @returns {$CancellablePromise<$models.SystemInfo>}
  */
-export function GetSystemInfo(models) {
-    return $Call.ByID(2463947982, models).then(/** @type {($result: any) => any} */(($result) => {
+export function GetSystemInfo() {
+    return $Call.ByID(2463947982).then(/** @type {($result: any) => any} */(($result) => {
         return $$createType5($result);
     }));
 }

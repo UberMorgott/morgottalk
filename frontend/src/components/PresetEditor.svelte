@@ -97,12 +97,13 @@
     <div class="modal-body">
       <!-- Name -->
       <div class="field" title={t(lang, 'tip_name')}>
-        <label class="field-label">{t(lang, 'name')}</label>
-        <input class="field-input" type="text" bind:value={form.name} placeholder={t(lang, 'presetName')} />
+        <label class="field-label" for="editor-name">{t(lang, 'name')}</label>
+        <input id="editor-name" class="field-input" type="text" bind:value={form.name} placeholder={t(lang, 'presetName')} />
       </div>
 
       <!-- Model -->
       <div class="field" title={t(lang, 'tip_model')}>
+        <!-- svelte-ignore a11y-label-has-associated-control -->
         <label class="field-label">{t(lang, 'model')}</label>
         <div class="field-row">
           <select class="field-select" bind:value={form.modelName} on:change={onModelChange}>
@@ -129,6 +130,7 @@
 
       <!-- Mode -->
       <div class="field" title={t(lang, 'tip_inputMode')}>
+        <!-- svelte-ignore a11y-label-has-associated-control -->
         <label class="field-label">{t(lang, 'inputMode')}</label>
         <div class="pill-group">
           <button class="pill" class:pill-active={form.inputMode === 'hold'} on:click={() => form.inputMode = 'hold'}>{t(lang, 'hold')}</button>
@@ -138,6 +140,7 @@
 
       <!-- Hotkey -->
       <div class="field" title={t(lang, 'tip_hotkey')}>
+        <!-- svelte-ignore a11y-label-has-associated-control -->
         <label class="field-label">{t(lang, 'hotkey')}</label>
         <HotkeyCapture bind:value={form.hotkey} {lang} bind:capturing={capturingHotkey} />
       </div>
@@ -152,8 +155,8 @@
 
       <!-- Language -->
       <div class="field" title={t(lang, 'tip_language')}>
-        <label class="field-label">{t(lang, 'language')}</label>
-        <select class="field-select" class:field-disabled={languageDisabled || form.useKBLayout} bind:value={form.language} disabled={languageDisabled || form.useKBLayout}>
+        <label class="field-label" for="editor-language">{t(lang, 'language')}</label>
+        <select id="editor-language" class="field-select" class:field-disabled={languageDisabled || form.useKBLayout} bind:value={form.language} disabled={languageDisabled || form.useKBLayout}>
           {#each languages as lng}
             <option value={lng.code}>{lng.name}</option>
           {/each}
