@@ -8,6 +8,7 @@ package services
 import "C"
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -29,9 +30,11 @@ func loadGGMLBackends() {
 			return
 		}
 		dir := filepath.Dir(exe)
+		log.Printf("loadGGMLBackends: loading from %s", dir)
 		cDir := C.CString(dir)
 		defer C.free(unsafe.Pointer(cDir))
 		C.ggml_backend_load_all_from_path(cDir)
+		log.Println("loadGGMLBackends: done")
 	})
 }
 
@@ -59,6 +62,7 @@ func NewWhisperEngine(modelPath string, backend string) (*WhisperEngine, error) 
 	defer C.free(unsafe.Pointer(cPath))
 
 	useGPU := backendUseGPU(backend)
+	log.Printf("NewWhisperEngine: use_gpu=%v, initializing model...", useGPU)
 	params := C.whisper_context_default_params()
 	params.use_gpu = C.bool(useGPU)
 	// flash_attn disabled: padding calculation depends on GGML_USE_CUDA/METAL compile flags.
@@ -68,6 +72,7 @@ func NewWhisperEngine(modelPath string, backend string) (*WhisperEngine, error) 
 		return nil, fmt.Errorf("failed to load whisper model: %s", modelPath)
 	}
 
+	log.Println("NewWhisperEngine: model initialized successfully")
 	return &WhisperEngine{ctx: ctx}, nil
 }
 

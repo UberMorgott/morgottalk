@@ -3,6 +3,8 @@
   import { Events, Browser } from '@wailsio/runtime';
   import { SaveGlobalSettings, InstallBackend } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
   import { DownloadModel, GetAvailableModels } from '../../bindings/github.com/UberMorgott/transcribation/services/modelservice.js';
+  import { CreatePreset, GetModelLanguages } from '../../bindings/github.com/UberMorgott/transcribation/services/presetservice.js';
+  import HotkeyCapture from './HotkeyCapture.svelte';
   import { t } from '../lib/i18n';
   import type { Lang } from '../lib/i18n';
 
@@ -19,18 +21,27 @@
   const TOTAL_STEPS = 2;
   let step = 1;
 
-  // Step 1: Basic Settings
+  // Step 1: App Settings
   let uiLang: Lang = (settings.uiLang as Lang) || 'en';
   let theme: 'dark' | 'light' = settings.theme === 'light' ? 'light' : 'dark';
-  let microphoneId = settings.microphoneId || '';
+  let closeAction: string = settings.closeAction || 'tray';
+  let autoStart: boolean = settings.autoStart;
+  let startMinimized: boolean = settings.startMinimized;
 
-  // Step 2: Downloads
+  // Step 2: First Preset
+  let microphoneId = settings.microphoneId || '';
   let backend = settings.backend || 'auto';
+  let selectedModelName = '';
+  let presetName = '';
+  let hotkey = '';
+  let inputMode: 'hold' | 'toggle' = 'hold';
+  let transLang = 'auto';
+  let presetLanguages: { code: string; name: string }[] = [{ code: 'auto', name: 'Auto' }];
+  let capturingHotkey = false;
 
   // Model download state
   type ModelDLState = { status: 'idle' | 'downloading' | 'done' | 'error'; percent: number; error: string };
   let modelDownloadStates: Record<string, ModelDLState> = {};
-  let selectedModel = '';
 
   // Backend install state
   type InstallStatus = 'idle' | 'downloading' | 'done' | 'error';
@@ -61,9 +72,19 @@
   $: recommendedModels = models.filter(m => m.category && !m.downloaded);
 
   // Auto-select first downloaded model
-  $: if (downloadedModels.length > 0 && !selectedModel) {
-    selectedModel = downloadedModels[0].name;
+  $: if (downloadedModels.length > 0 && !selectedModelName) {
+    selectedModelName = downloadedModels[0].name;
   }
+
+  // Load languages when model changes
+  $: if (selectedModelName) {
+    GetModelLanguages(selectedModelName).then(langs => {
+      presetLanguages = [{ code: 'auto', name: t(uiLang, 'autoDetect') }, ...(langs || [])];
+    }).catch(() => {});
+  }
+
+  // Default preset name based on language
+  $: if (!presetName) presetName = t(uiLang, 'onboarding_default_preset_name');
 
   // GPU backends: hardware present or can install runtime (exclude CPU/auto)
   $: gpuBackends = backends.filter(b =>
@@ -121,7 +142,7 @@
           modelDownloadStates[data.modelName] = { status: 'error', percent: 0, error: data.error };
         } else {
           modelDownloadStates[data.modelName] = { status: 'done', percent: 100, error: '' };
-          selectedModel = data.modelName;
+          selectedModelName = data.modelName;
           // Refresh models list
           refreshModels();
         }
@@ -160,9 +181,9 @@
         modelsDir: settings.modelsDir,
         theme,
         uiLang,
-        closeAction: settings.closeAction,
-        autoStart: settings.autoStart,
-        startMinimized: settings.startMinimized,
+        closeAction,
+        autoStart,
+        startMinimized,
         backend,
         onboardingDone: done,
       });
@@ -185,6 +206,23 @@
 
   async function finish() {
     await saveSettings(true);
+    // Create the first preset if a model is selected
+    if (selectedModelName && step === 2) {
+      try {
+        await CreatePreset({
+          id: '',
+          name: presetName || 'My Preset',
+          modelName: selectedModelName,
+          keepModelLoaded: false,
+          inputMode,
+          hotkey,
+          language: transLang,
+          useKBLayout: false,
+          keepHistory: true,
+          enabled: true,
+        });
+      } catch {}
+    }
     dispatch('done', { uiLang, theme, backend, microphoneId });
   }
 
@@ -316,7 +354,7 @@
     <!-- Step content -->
     <div class="card-body">
 
-      <!-- ==================== STEP 1: Basic Settings ==================== -->
+      <!-- ==================== STEP 1: App Settings ==================== -->
       {#if step === 1}
         <h2 class="step-title">{t(uiLang, 'onboarding_step1_title_new')}</h2>
         <p class="step-hint">{t(uiLang, 'onboarding_step1_hint_new')}</p>
@@ -348,51 +386,99 @@
           </div>
         </div>
 
-        <!-- Microphone -->
+        <!-- Close Action -->
         <div class="field">
-          <label for="mic-select" class="field-label">{t(uiLang, 'microphone')}</label>
-          {#if microphones.length === 0}
-            <div class="mic-warning">
-              <div class="mic-warning-icon">{@html iconSvg.mic}</div>
-              <div class="mic-warning-text">
-                <span class="mic-warning-title">{t(uiLang, 'diag_no_microphone')}</span>
-                <span class="mic-warning-hint">{t(uiLang, 'onboarding_no_mic_hint')}</span>
-              </div>
-            </div>
-          {:else}
-            <select id="mic-select" class="select" bind:value={microphoneId}>
-              <option value="">{t(uiLang, 'default_mic')}</option>
-              {#each microphones as mic (mic.id)}
-                <option value={mic.id}>{mic.name}{mic.isDefault ? ' ★' : ''}</option>
-              {/each}
-            </select>
-          {/if}
+          <!-- svelte-ignore a11y-label-has-associated-control -->
+          <label class="field-label">{t(uiLang, 'closeAction')}</label>
+          <div class="pill-row">
+            <button class="pill" class:active={closeAction === 'tray'} on:click={() => closeAction = 'tray'}>
+              {t(uiLang, 'closeToTray')}
+            </button>
+            <button class="pill" class:active={closeAction === 'quit'} on:click={() => closeAction = 'quit'}>
+              {t(uiLang, 'closeQuit')}
+            </button>
+          </div>
         </div>
 
-      <!-- ==================== STEP 2: Downloads (Optional) ==================== -->
-      {:else if step === 2}
-        <h2 class="step-title">{t(uiLang, 'onboarding_step2_title_new')}</h2>
-        <p class="step-hint">{t(uiLang, 'onboarding_step2_hint_new')}</p>
+        <!-- Auto Start + Start Minimized -->
+        <div class="field-row-compact">
+          <div class="field compact">
+            <!-- svelte-ignore a11y-label-has-associated-control -->
+            <label class="field-label">{t(uiLang, 'autoStart')}</label>
+            <div class="pill-row">
+              <button class="pill" class:active={autoStart} on:click={() => autoStart = true}>
+                {t(uiLang, 'on')}
+              </button>
+              <button class="pill" class:active={!autoStart} on:click={() => autoStart = false}>
+                {t(uiLang, 'off')}
+              </button>
+            </div>
+          </div>
+          <div class="field compact">
+            <!-- svelte-ignore a11y-label-has-associated-control -->
+            <label class="field-label">{t(uiLang, 'startMinimized')}</label>
+            <div class="pill-row">
+              <button class="pill" class:active={startMinimized} on:click={() => startMinimized = true}>
+                {t(uiLang, 'on')}
+              </button>
+              <button class="pill" class:active={!startMinimized} on:click={() => startMinimized = false}>
+                {t(uiLang, 'off')}
+              </button>
+            </div>
+          </div>
+        </div>
 
-        <!-- MODEL SECTION -->
+      <!-- ==================== STEP 2: First Preset ==================== -->
+      {:else if step === 2}
+        <h2 class="step-title">{t(uiLang, 'onboarding_step2_preset')}</h2>
+        <p class="step-hint">{t(uiLang, 'onboarding_step2_preset_hint')}</p>
+
+        <!-- SECTION 1: Audio -->
         <div class="section">
           <div class="section-header">
-            <span class="section-label">{t(uiLang, 'onboarding_model_section')}</span>
+            <span class="section-label">{t(uiLang, 'onboarding_section_audio')}</span>
+          </div>
+          <div class="field">
+            <label for="mic-select" class="field-label">{t(uiLang, 'microphone')}</label>
+            {#if microphones.length === 0}
+              <div class="mic-warning">
+                <div class="mic-warning-icon">{@html iconSvg.mic}</div>
+                <div class="mic-warning-text">
+                  <span class="mic-warning-title">{t(uiLang, 'diag_no_microphone')}</span>
+                  <span class="mic-warning-hint">{t(uiLang, 'onboarding_no_mic_hint')}</span>
+                </div>
+              </div>
+            {:else}
+              <select id="mic-select" class="select" bind:value={microphoneId}>
+                <option value="">{t(uiLang, 'default_mic')}</option>
+                {#each microphones as mic (mic.id)}
+                  <option value={mic.id}>{mic.name}{mic.isDefault ? ' ★' : ''}</option>
+                {/each}
+              </select>
+            {/if}
+          </div>
+        </div>
+
+        <!-- SECTION 2: Speech Model -->
+        <div class="section">
+          <div class="section-header">
+            <span class="section-label">{t(uiLang, 'onboarding_section_model')}</span>
             <button class="btn-link-sm" on:click={() => dispatch('openModels')}>
               {t(uiLang, 'manageModels')} →
             </button>
           </div>
 
           {#if downloadedModels.length > 0}
-            <div class="model-ready">
-              <span class="model-ready-icon">{@html iconSvg.check}</span>
-              <span class="model-ready-text">
-                {downloadedModels.length === 1
-                  ? downloadedModels[0].name
-                  : `${downloadedModels.length} ${t(uiLang, 'onboarding_models_ready')}`}
-              </span>
+            <div class="field">
+              <label for="model-select" class="field-label">{t(uiLang, 'model')}</label>
+              <select id="model-select" class="select" bind:value={selectedModelName}>
+                {#each downloadedModels as m (m.name)}
+                  <option value={m.name}>{m.name} ({m.size})</option>
+                {/each}
+              </select>
             </div>
           {/if}
+
           {#if recommendedModels.length === 0 && downloadedModels.length > 0}
             <div class="model-ready">
               <span class="model-ready-icon">{@html iconSvg.check}</span>
@@ -447,10 +533,10 @@
           {/if}
         </div>
 
-        <!-- GPU BACKEND SECTION -->
+        <!-- SECTION 3: Processing (GPU Backend) -->
         <div class="section">
           <div class="section-header">
-            <span class="section-label">{t(uiLang, 'onboarding_gpu_section')}</span>
+            <span class="section-label">{t(uiLang, 'onboarding_section_processing')}</span>
           </div>
           <p class="section-note">{t(uiLang, 'onboarding_gpu_explain')}</p>
 
@@ -605,6 +691,52 @@
           </div>
         </div>
 
+        <!-- SECTION 4: Hotkey & Input -->
+        <div class="section">
+          <div class="section-header">
+            <span class="section-label">{t(uiLang, 'onboarding_section_hotkey')}</span>
+          </div>
+
+          <!-- Preset Name -->
+          <div class="field">
+            <!-- svelte-ignore a11y-label-has-associated-control -->
+            <label class="field-label">{t(uiLang, 'onboarding_preset_name')}</label>
+            <input type="text" class="input" bind:value={presetName} placeholder={t(uiLang, 'onboarding_default_preset_name')} />
+          </div>
+
+          <!-- Hotkey -->
+          <div class="field">
+            <!-- svelte-ignore a11y-label-has-associated-control -->
+            <label class="field-label">{t(uiLang, 'hotkey')}</label>
+            <HotkeyCapture value={hotkey} lang={uiLang} bind:capturing={capturingHotkey}
+              on:change={(e) => hotkey = e.detail} />
+          </div>
+
+          <!-- Input Mode -->
+          <div class="field">
+            <!-- svelte-ignore a11y-label-has-associated-control -->
+            <label class="field-label">{t(uiLang, 'inputMode')}</label>
+            <div class="pill-row">
+              <button class="pill" class:active={inputMode === 'hold'} on:click={() => inputMode = 'hold'}>
+                {t(uiLang, 'hold')}
+              </button>
+              <button class="pill" class:active={inputMode === 'toggle'} on:click={() => inputMode = 'toggle'}>
+                {t(uiLang, 'toggle')}
+              </button>
+            </div>
+          </div>
+
+          <!-- Language -->
+          <div class="field">
+            <label for="lang-select" class="field-label">{t(uiLang, 'language')}</label>
+            <select id="lang-select" class="select" bind:value={transLang}>
+              {#each presetLanguages as pl (pl.code)}
+                <option value={pl.code}>{pl.name}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
       {/if}
     </div>
 
@@ -619,7 +751,7 @@
       </div>
       <div class="footer-right">
         <button class="btn-skip" on:click={skip}>
-          {step === 2 ? t(uiLang, 'onboarding_skip_downloads') : t(uiLang, 'onboarding_skip')}
+          {t(uiLang, 'onboarding_skip')}
         </button>
         {#if step < TOTAL_STEPS}
           <button class="btn-next" on:click={next}>
@@ -693,7 +825,13 @@
   .step-hint { font-size: 13px; color: var(--text-tertiary); margin: -10px 0 0; line-height: 1.5; }
 
   .field { display: flex; flex-direction: column; gap: 7px; }
+  .field.compact { flex: 1; min-width: 0; }
   .field-label { font-size: 11px; font-weight: 500; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: .06em; }
+
+  .field-row-compact {
+    display: flex;
+    gap: 14px;
+  }
 
   /* Lang grid */
   .lang-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; }
@@ -718,14 +856,14 @@
   .pill.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 500; }
 
   /* Inputs */
-  .select {
+  .select, .input {
     width: 100%; padding: 8px 10px; border-radius: 8px;
     border: 1px solid var(--toggle-border, var(--border-color));
     background: var(--bg-input, var(--bg-page));
     color: var(--text-secondary); font-size: 14px; outline: none;
     box-sizing: border-box; transition: border-color .14s;
   }
-  .select:focus { border-color: var(--accent); }
+  .select:focus, .input:focus { border-color: var(--accent); }
 
   /* Microphone warning */
   .mic-warning {

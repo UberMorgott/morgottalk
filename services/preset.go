@@ -32,18 +32,19 @@ type TranscriptionResult struct {
 
 // PresetService manages presets, recording, and transcription.
 type PresetService struct {
-	mu           sync.Mutex
-	cfg          *config.AppConfig
-	engines      map[string]*WhisperEngine // preset ID → loaded engine
-	audio        *AudioCapture
-	history      *HistoryService
-	models       *ModelService
-	hotkeys      *HotkeyManager
-	states       map[string]string // preset ID → "idle"/"recording"/"processing"
-	lastText     string
-	recordTimer  *time.Timer // auto-stop after maxRecordDuration
-	recordingID  string      // preset ID being recorded (for auto-stop)
-	shutdownOnce sync.Once
+	mu             sync.Mutex
+	cfg            *config.AppConfig
+	engines        map[string]*WhisperEngine // preset ID → loaded engine
+	engineLoading  map[string]bool           // preset ID → true if model load in progress
+	audio          *AudioCapture
+	history        *HistoryService
+	models         *ModelService
+	hotkeys        *HotkeyManager
+	states         map[string]string // preset ID → "idle"/"recording"/"processing"
+	lastText       string
+	recordTimer    *time.Timer // auto-stop after maxRecordDuration
+	recordingID    string      // preset ID being recorded (for auto-stop)
+	shutdownOnce   sync.Once
 }
 
 func NewPresetService(history *HistoryService, models *ModelService) *PresetService {
@@ -52,11 +53,12 @@ func NewPresetService(history *HistoryService, models *ModelService) *PresetServ
 		slog.Warn("failed to load config", "err", err)
 	}
 	return &PresetService{
-		cfg:     cfg,
-		engines: make(map[string]*WhisperEngine),
-		history: history,
-		models:  models,
-		states:  make(map[string]string),
+		cfg:           cfg,
+		engines:       make(map[string]*WhisperEngine),
+		engineLoading: make(map[string]bool),
+		history:       history,
+		models:        models,
+		states:        make(map[string]string),
 	}
 }
 
@@ -153,8 +155,15 @@ func (s *PresetService) onHotkeyPress(presetID string) {
 		state := s.states[presetID]
 		s.mu.Unlock()
 		if state == "recording" {
-			if _, err := s.StopRecording(presetID); err != nil {
+			result, err := s.StopRecording(presetID)
+			if err != nil {
 				log.Printf("StopRecording failed: %v", err)
+			}
+			if result.Error != "" {
+				log.Printf("Transcription error: %s", result.Error)
+				if app := application.Get(); app != nil {
+					app.Event.Emit("transcription:error", map[string]string{"error": result.Error, "presetId": presetID})
+				}
 			}
 		} else {
 			if err := s.StartRecording(presetID); err != nil {
@@ -194,8 +203,15 @@ func (s *PresetService) onHotkeyRelease(presetID string) {
 	log.Printf("onHotkeyRelease: preset=%s state=%s", presetID, state)
 
 	if state == "recording" {
-		if _, err := s.StopRecording(presetID); err != nil {
+		result, err := s.StopRecording(presetID)
+		if err != nil {
 			log.Printf("StopRecording failed: %v", err)
+		}
+		if result.Error != "" {
+			log.Printf("Transcription error: %s", result.Error)
+			if app := application.Get(); app != nil {
+				app.Event.Emit("transcription:error", map[string]string{"error": result.Error, "presetId": presetID})
+			}
 		}
 	}
 }
@@ -664,7 +680,11 @@ func (s *PresetService) Shutdown() {
 	})
 }
 
+// modelInitTimeout is the maximum time to wait for whisper model initialization.
+const modelInitTimeout = 60 * time.Second
+
 // getOrLoadEngine returns a cached engine or loads a new one.
+// Prevents concurrent loads for the same preset and has a timeout for model init.
 func (s *PresetService) getOrLoadEngine(p *config.Preset) (*WhisperEngine, error) {
 	s.mu.Lock()
 	if engine, ok := s.engines[p.ID]; ok {
@@ -672,7 +692,19 @@ func (s *PresetService) getOrLoadEngine(p *config.Preset) (*WhisperEngine, error
 		log.Printf("Using cached model for preset %q", p.Name)
 		return engine, nil
 	}
+	if s.engineLoading[p.ID] {
+		s.mu.Unlock()
+		log.Printf("Model already loading for preset %q, skipping", p.Name)
+		return nil, fmt.Errorf("model is already loading for preset %q", p.Name)
+	}
+	s.engineLoading[p.ID] = true
 	s.mu.Unlock()
+
+	defer func() {
+		s.mu.Lock()
+		delete(s.engineLoading, p.ID)
+		s.mu.Unlock()
+	}()
 
 	modelPath, err := s.findModel(p.ModelName)
 	if err != nil {
@@ -685,7 +717,27 @@ func (s *PresetService) getOrLoadEngine(p *config.Preset) (*WhisperEngine, error
 	}
 
 	log.Printf("Loading whisper model for preset %q: %s (backend: %s)", p.Name, modelPath, backend)
-	engine, err := NewWhisperEngine(modelPath, backend)
+
+	// Run model init in a goroutine with timeout to catch GPU backend hangs.
+	type initResult struct {
+		engine *WhisperEngine
+		err    error
+	}
+	ch := make(chan initResult, 1)
+	go func() {
+		eng, initErr := NewWhisperEngine(modelPath, backend)
+		ch <- initResult{eng, initErr}
+	}()
+
+	var engine *WhisperEngine
+	select {
+	case res := <-ch:
+		engine, err = res.engine, res.err
+	case <-time.After(modelInitTimeout):
+		log.Printf("Model init TIMED OUT after %v for preset %q (backend: %s) — try CPU backend", modelInitTimeout, p.Name, backend)
+		return nil, fmt.Errorf("model init timed out (%v) — the %s backend may not work on this system, try switching to CPU", modelInitTimeout, backend)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("whisper init: %w", err)
 	}

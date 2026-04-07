@@ -89,6 +89,7 @@
     let unsubTranscription: Function;
     let unsubModelProgress: Function;
     let unsubHookFailed: Function;
+    let unsubTranscriptionError: Function;
 
     void (async () => {
       try { appVersion = await GetAppVersion(); } catch (e) { console.error('get version failed:', e); }
@@ -163,6 +164,13 @@
         showDiagnostic('error', t(uiLang, 'hotkey_hook_failed'));
       });
 
+      unsubTranscriptionError = Events.On('transcription:error', (event: any) => {
+        const data = event.data?.[0] || event.data || event;
+        if (data.error) {
+          showDiagnostic('error', data.error);
+        }
+      });
+
       // Init SortableJS after DOM renders
       await tick();
       initSortable();
@@ -172,6 +180,7 @@
       if (unsubTranscription) unsubTranscription();
       if (unsubModelProgress) unsubModelProgress();
       if (unsubHookFailed) unsubHookFailed();
+      if (unsubTranscriptionError) unsubTranscriptionError();
       clearInterval(stateInterval);
       if (sortable) sortable.destroy();
     };
