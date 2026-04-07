@@ -266,26 +266,57 @@ func parseCUDALogStage(logPath string, offset int64) string {
 }
 
 func downloadFileWithProgress(url, dest string, onProgress func(pct float64)) error {
-	resp, err := httpClient.Get(url)
+	// Resume support: check if a partial file already exists.
+	var resumeOffset int64
+	if info, err := os.Stat(dest); err == nil && info.Size() > 0 {
+		resumeOffset = info.Size()
+		log.Printf("downloadFileWithProgress: found partial file %s (%d bytes), attempting resume", dest, resumeOffset)
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return err
+	}
+	if resumeOffset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", resumeOffset))
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	var total int64
+	var f *os.File
+
+	switch resp.StatusCode {
+	case http.StatusPartialContent:
+		total = resumeOffset + resp.ContentLength
+		f, err = os.OpenFile(dest, os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return err
+		}
+		log.Printf("downloadFileWithProgress: resuming %s from %d / %d bytes", dest, resumeOffset, total)
+
+	case http.StatusOK:
+		if resumeOffset > 0 {
+			log.Printf("downloadFileWithProgress: server does not support Range for %s, restarting", dest)
+		}
+		resumeOffset = 0
+		total = resp.ContentLength
+		f, err = os.Create(dest)
+		if err != nil {
+			return err
+		}
+
+	default:
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-
-	total := resp.ContentLength
-
-	f, err := os.Create(dest)
-	if err != nil {
-		return err
 	}
 	defer f.Close()
 
+	loaded := resumeOffset
 	buf := make([]byte, 64*1024)
-	var loaded int64
 	var lastEmitPct float64
 
 	for {

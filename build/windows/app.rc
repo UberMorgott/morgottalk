@@ -1,0 +1,5 @@
+// Windows resource file for MorgoTTalk
+// Compiled with: windres -i build/windows/app.rc -o rsrc_windows_amd64.syso -O coff
+
+// Application icon (ID 1 = default app icon)
+1 ICON "build/windows/icon.ico"

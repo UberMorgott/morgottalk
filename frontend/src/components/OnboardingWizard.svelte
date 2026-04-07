@@ -2,10 +2,9 @@
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { Events } from '@wailsio/runtime';
   import { SaveGlobalSettings, InstallBackend } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
-  import { CreatePreset } from '../../bindings/github.com/UberMorgott/transcribation/services/presetservice.js';
+  import { DownloadModel, GetAvailableModels } from '../../bindings/github.com/UberMorgott/transcribation/services/modelservice.js';
   import { t } from '../lib/i18n';
   import type { Lang } from '../lib/i18n';
-  import HotkeyCapture from './HotkeyCapture.svelte';
 
   export let microphones: { id: string; name: string; isDefault: boolean }[] = [];
   export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number }[] = [];
@@ -17,19 +16,23 @@
     openModels: void;
   }>();
 
-  const TOTAL_STEPS = 4;
+  const TOTAL_STEPS = 2;
   let step = 1;
 
-  // Step 1
+  // Step 1: Basic Settings
   let uiLang: Lang = (settings.uiLang as Lang) || 'en';
   let theme: 'dark' | 'light' = settings.theme === 'light' ? 'light' : 'dark';
-
-  // Step 2
   let microphoneId = settings.microphoneId || '';
 
-  // Step 3 — backend selection + install state
+  // Step 2: Downloads
   let backend = settings.backend || 'auto';
 
+  // Model download state
+  type ModelDLState = { status: 'idle' | 'downloading' | 'done' | 'error'; percent: number; error: string };
+  let modelDownloadStates: Record<string, ModelDLState> = {};
+  let selectedModel = '';
+
+  // Backend install state
   type InstallStatus = 'idle' | 'downloading' | 'done' | 'error';
   type InstallState = {
     status: InstallStatus;
@@ -38,29 +41,7 @@
     error: string;
   };
   let installStates: Record<string, InstallState> = {};
-  let infoOpenId: string | null = null; // id бэкенда, у которого открыта инфо-панель
-  let nextWarning = false;
-
-  // Step 4 — preset
-  let presetName = '';
-  let presetHotkey = '';
-  let presetModel = '';
-  let presetInputMode: 'hold' | 'toggle' = 'hold';
-  let presetLanguage = 'auto';
-  let presetCapturing = false;
-
-  const TRANSCRIPTION_LANGS = [
-    { code: 'auto', label: 'Auto' },
-    { code: 'en',   label: 'English' },
-    { code: 'ru',   label: 'Русский' },
-    { code: 'de',   label: 'Deutsch' },
-    { code: 'es',   label: 'Español' },
-    { code: 'fr',   label: 'Français' },
-    { code: 'zh',   label: '中文' },
-    { code: 'ja',   label: '日本語' },
-    { code: 'pt',   label: 'Português' },
-    { code: 'ko',   label: '한국어' },
-  ];
+  let infoOpenId: string | null = null;
 
   const LANGS: { code: Lang; label: string }[] = [
     { code: 'en', label: 'English' },
@@ -75,8 +56,11 @@
   ];
 
   $: downloadedModels = models.filter(m => m.downloaded);
-  $: if (downloadedModels.length > 0 && !presetModel) {
-    presetModel = downloadedModels[0].name;
+  $: recommendedModels = models.filter(m => !m.downloaded).slice(0, 3); // Show first 3 non-downloaded models
+
+  // Auto-select first downloaded model
+  $: if (downloadedModels.length > 0 && !selectedModel) {
+    selectedModel = downloadedModels[0].name;
   }
 
   // GPU backends: hardware present or can install runtime (exclude CPU/auto)
@@ -86,14 +70,21 @@
   );
   $: cpuBackend = backends.find(b => b.id === 'cpu');
 
-  // Is any install running right now?
-  $: isDownloading = Object.values(installStates).some(s => s.status === 'downloading');
+  // Is any download running right now?
+  $: isAnyDownloading =
+    Object.values(installStates).some(s => s.status === 'downloading') ||
+    Object.values(modelDownloadStates).some(s => s.status === 'downloading');
 
-  // Subscribe to backend install progress events
-  let unsubProgress: (() => void) | null = null;
+  // Currently active download for unified progress area
+  $: activeModelDL = Object.entries(modelDownloadStates).find(([, s]) => s.status === 'downloading');
+  $: activeBackendDL = Object.entries(installStates).find(([, s]) => s.status === 'downloading');
+
+  // Subscribe to events
+  let unsubBackendProgress: (() => void) | null = null;
+  let unsubModelProgress: (() => void) | null = null;
+
   onMount(() => {
-    unsubProgress = Events.On('backend:install:progress', (event: any) => {
-      // Wails v3 wraps emit args as array in event.data; handle all formats defensively
+    unsubBackendProgress = Events.On('backend:install:progress', (event: any) => {
       const raw = event?.data;
       const data = Array.isArray(raw) ? raw[0] : (raw ?? event);
       const id: string = data?.backendId;
@@ -104,7 +95,6 @@
           installStates[id] = { status: 'error', stageText: '', percent: 0, error: data.error };
         } else {
           installStates[id] = { status: 'done', stageText: '', percent: 100, error: '' };
-          // auto-select this backend
           backend = id;
         }
       } else {
@@ -120,11 +110,41 @@
       }
       installStates = installStates;
     });
+
+    unsubModelProgress = Events.On('model:download:progress', (event: any) => {
+      const data = event.data?.[0] || event.data || event;
+      if (!data.modelName) return;
+
+      if (data.done) {
+        if (data.error) {
+          modelDownloadStates[data.modelName] = { status: 'error', percent: 0, error: data.error };
+        } else {
+          modelDownloadStates[data.modelName] = { status: 'done', percent: 100, error: '' };
+          selectedModel = data.modelName;
+          // Refresh models list
+          refreshModels();
+        }
+      } else {
+        modelDownloadStates[data.modelName] = {
+          status: 'downloading',
+          percent: data.percent || 0,
+          error: '',
+        };
+      }
+      modelDownloadStates = modelDownloadStates;
+    });
   });
 
   onDestroy(() => {
-    if (unsubProgress) unsubProgress();
+    if (unsubBackendProgress) unsubBackendProgress();
+    if (unsubModelProgress) unsubModelProgress();
   });
+
+  async function refreshModels() {
+    try {
+      models = await GetAvailableModels();
+    } catch {}
+  }
 
   function applyTheme(th: 'dark' | 'light') {
     theme = th;
@@ -149,42 +169,41 @@
   }
 
   async function next() {
-    if (step === 3 && isDownloading) {
-      nextWarning = true;
-      return;
-    }
-    nextWarning = false;
     await saveSettings(false);
     if (step < TOTAL_STEPS) step++;
   }
 
   function back() {
-    nextWarning = false;
     if (step > 1) step--;
   }
 
-  async function finish() {
-    const name = presetName.trim() || t(uiLang, 'onboarding_step4_name_placeholder');
-    try {
-      await CreatePreset({
-        id: '',
-        name,
-        modelName: presetModel,
-        hotkey: presetHotkey,
-        language: presetLanguage,
-        inputMode: presetInputMode,
-        keepModelLoaded: false,
-        keepHistory: true,
-        useKBLayout: false,
-        enabled: presetHotkey !== '',
-      });
-    } catch (e) { console.error('create preset failed:', e); }
+  async function skip() {
     await saveSettings(true);
     dispatch('done', { uiLang, theme, backend, microphoneId });
   }
 
-  // --- Backend install flow ---
+  async function finish() {
+    await saveSettings(true);
+    dispatch('done', { uiLang, theme, backend, microphoneId });
+  }
 
+  // --- Model download ---
+  async function startModelDownload(name: string) {
+    modelDownloadStates[name] = { status: 'downloading', percent: 0, error: '' };
+    modelDownloadStates = modelDownloadStates;
+    try {
+      await DownloadModel(name);
+    } catch (e: any) {
+      modelDownloadStates[name] = { status: 'error', percent: 0, error: String(e) };
+      modelDownloadStates = modelDownloadStates;
+    }
+  }
+
+  function getModelState(name: string): ModelDLState {
+    return modelDownloadStates[name] || { status: 'idle', percent: 0, error: '' };
+  }
+
+  // --- Backend install flow ---
   function getState(id: string): InstallState {
     return installStates[id] || { status: 'idle', stageText: '', percent: 0, error: '' };
   }
@@ -199,8 +218,6 @@
     installStates = installStates;
     try {
       await InstallBackend(id);
-      // InstallBackend returns "installing" immediately; actual progress comes via events.
-      // Do NOT set done here — the event handler will set it when the download finishes.
     } catch (e: any) {
       installStates[id] = { status: 'error', stageText: '', percent: 0, error: String(e) };
       installStates = installStates;
@@ -236,13 +253,18 @@
     return b.gpuDetected || b.name;
   }
 
-  // OS-aware platform id list to exclude
-  // Go already filters by OS, but guard against unexpected items
+  function backendExplanation(b: typeof backends[0]): string {
+    if (b.id === 'cuda') return t(uiLang, 'onboarding_cuda_explain');
+    if (b.id === 'vulkan') return t(uiLang, 'onboarding_vulkan_explain');
+    return '';
+  }
+
+  // OS-aware platform filter
   const osExclude: string[] = (() => {
     const ua = navigator.userAgent.toLowerCase();
-    if (ua.includes('win')) return ['metal', 'rocm'];     // macOS/Linux only
-    if (ua.includes('mac')) return ['rocm'];               // Linux only
-    return ['metal'];                                       // Linux: hide Metal
+    if (ua.includes('win')) return ['metal', 'rocm'];
+    if (ua.includes('mac')) return ['rocm'];
+    return ['metal'];
   })();
   $: visibleGpuBackends = gpuBackends.filter(b => !osExclude.includes(b.id));
 
@@ -252,19 +274,22 @@
       .replace('{total}', String(TOTAL_STEPS));
   }
 
-  // ── SVG icon set (20×20, consistent stroke style) ──
+  function formatSize(bytes: number): string {
+    if (bytes >= 1024 * 1024 * 1024) return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+    if (bytes >= 1024 * 1024) return Math.round(bytes / (1024 * 1024)) + ' MB';
+    return Math.round(bytes / 1024) + ' KB';
+  }
+
+  // SVG icons
   const S = 'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"';
   const iconSvg: Record<string, string> = {
-    // CPU chip with pins
     cpu: `<svg viewBox="0 0 20 20" fill="none" ${S}><rect x="5" y="5" width="10" height="10" rx="1.5"/><rect x="7.5" y="7.5" width="5" height="5" rx="0.5"/><path d="M7.5 5V2.5M10 5V2.5M12.5 5V2.5M7.5 15v2.5M10 15v2.5M12.5 15v2.5M5 7.5H2.5M5 10H2.5M5 12.5H2.5M15 7.5h2.5M15 10h2.5M15 12.5h2.5"/></svg>`,
-    // NVIDIA eye logo (simplified)
     cuda: `<svg viewBox="0 0 20 20" fill="none" ${S}><path d="M2 10c2.5-5.5 13.5-5.5 16 0-2.5 5.5-13.5 5.5-16 0z"/><circle cx="10" cy="10" r="3"/><circle cx="10" cy="10" r="1.3" fill="currentColor" stroke="none"/></svg>`,
-    // Vulkan angular V
     vulkan: `<svg viewBox="0 0 20 20" fill="none" ${S}><path d="M3 4L10 17L17 4"/><path d="M7 4L10 9.5L13 4"/></svg>`,
-    // Generic GPU card (ROCm, Metal, others)
     gpu: `<svg viewBox="0 0 20 20" fill="none" ${S}><rect x="1" y="6" width="14.5" height="8.5" rx="1.5"/><rect x="3" y="8" width="4" height="4" rx="0.5"/><circle cx="12" cy="10.25" r="2"/><path d="M15.5 8h3M15.5 10.25h3M15.5 12.5h3"/></svg>`,
-    // Download arrow into tray
     download: `<svg viewBox="0 0 20 20" fill="none" ${S}><path d="M10 3v9M7 9l3 3 3-3"/><path d="M3 14.5v1a1 1 0 001 1h12a1 1 0 001-1v-1"/></svg>`,
+    check: `<svg viewBox="0 0 20 20" fill="none" ${S}><path d="M4 10l4 4 8-8"/></svg>`,
+    mic: `<svg viewBox="0 0 20 20" fill="none" ${S}><rect x="7" y="2" width="6" height="10" rx="3"/><path d="M4 10a6 6 0 0012 0"/><path d="M10 16v2M7 18h6"/></svg>`,
   };
 
   function backendIcon(id: string): string {
@@ -290,11 +315,12 @@
     <!-- Step content -->
     <div class="card-body">
 
-      <!-- ── Step 1: Language & Theme ── -->
+      <!-- ==================== STEP 1: Basic Settings ==================== -->
       {#if step === 1}
-        <h2 class="step-title">{t(uiLang, 'onboarding_step1_title')}</h2>
-        <p class="step-hint">{t(uiLang, 'onboarding_step1_hint')}</p>
+        <h2 class="step-title">{t(uiLang, 'onboarding_step1_title_new')}</h2>
+        <p class="step-hint">{t(uiLang, 'onboarding_step1_hint_new')}</p>
 
+        <!-- Language -->
         <div class="field">
           <!-- svelte-ignore a11y-label-has-associated-control -->
           <label class="field-label">{t(uiLang, 'uiLanguage')}</label>
@@ -307,6 +333,7 @@
           </div>
         </div>
 
+        <!-- Theme -->
         <div class="field">
           <!-- svelte-ignore a11y-label-has-associated-control -->
           <label class="field-label">{t(uiLang, 'theme')}</label>
@@ -320,251 +347,271 @@
           </div>
         </div>
 
-      <!-- ── Step 2: Microphone ── -->
-      {:else if step === 2}
-        <h2 class="step-title">{t(uiLang, 'onboarding_step2_title')}</h2>
-        <p class="step-hint">{t(uiLang, 'onboarding_step2_hint')}</p>
-
+        <!-- Microphone -->
         <div class="field">
           <label for="mic-select" class="field-label">{t(uiLang, 'microphone')}</label>
-          <select id="mic-select" class="select" bind:value={microphoneId}>
-            <option value="">{t(uiLang, 'default_mic')}</option>
-            {#each microphones as mic (mic.id)}
-              <option value={mic.id}>{mic.name}{mic.isDefault ? ' ★' : ''}</option>
-            {/each}
-          </select>
-        </div>
-
-      <!-- ── Step 3: GPU Acceleration ── -->
-      {:else if step === 3}
-        <h2 class="step-title">{t(uiLang, 'onboarding_step3_title')}</h2>
-        <p class="step-hint">{t(uiLang, 'onboarding_step3_hint')}</p>
-
-        <div class="acc-list">
-
-          <!-- GPU backends (only visible if hardware exists, current OS only) -->
-          {#each visibleGpuBackends as b (b.id)}
-            {@const state = getState(b.id)}
-            {@const isReady = (b.compiled && b.systemAvailable) || state.status === 'done'}
-            {@const needsDL = b.systemAvailable && !b.compiled && state.status === 'idle'}
-            {@const needsInstall = b.canInstall && !b.systemAvailable && state.status === 'idle'}
-            {@const badDriver = b.unavailableReason === 'no_driver'}
-            {@const downloading = state.status === 'downloading'}
-            {@const done = state.status === 'done'}
-            {@const hasError = state.status === 'error'}
-            {@const showInfo = infoOpenId === b.id && !downloading}
-
-            <div class="acc-card" class:selected={backend === b.id} class:downloading>
-              <!-- Card header row -->
-              <div class="acc-card-header"
-                on:click={() => {
-                  if (isReady || done) { backend = b.id; infoOpenId = null; }
-                  else if ((needsDL || needsInstall) && !downloading) { openInfo(b.id); }
-                }}
-                role="button" tabindex="0"
-                on:keydown={(e) => { if (e.key === 'Enter') {
-                  if (isReady || done) { backend = b.id; infoOpenId = null; }
-                  else if (needsDL || needsInstall) { openInfo(b.id); }
-                }}}>
-                <div class="acc-icon">{@html backendIcon(b.id)}</div>
-                <div class="acc-info">
-                  <div class="acc-name">
-                    {b.name}
-                    <span class="badge-speed">{speedLabel(b.id)}</span>
-                    {#if b.recommended && (isReady || needsDL || needsInstall)}
-                      <span class="badge-rec">{t(uiLang, 'backendRecommended')}</span>
-                    {/if}
-                    {#if done || (b.compiled && b.systemAvailable)}
-                      <span class="badge-ok">✓</span>
-                    {/if}
-                  </div>
-                  <div class="acc-gpu">{hwLabel(b)}</div>
-                  <div class="acc-status" class:status-ready={isReady || done} class:status-error={hasError}>
-                    {gpuStatusText(b)}
-                  </div>
-                </div>
-                <!-- Right: spinner | radio dot | download icon -->
-                {#if downloading}
-                  <div class="acc-right-icon">
-                    <svg class="spin-anim" viewBox="0 0 20 20" fill="none">
-                      <circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-dasharray="14 33"/>
-                    </svg>
-                  </div>
-                {:else if isReady || done}
-                  <div class="acc-select-dot" class:dot-active={backend === b.id}></div>
-                {:else if needsDL || needsInstall}
-                  <!-- ⬇ icon: immediately starts download -->
-                  <button class="acc-dl-icon"
-                    title={needsDL ? t(uiLang, 'onboarding_download_btn') : t(uiLang, 'onboarding_install_btn')}
-                    on:click|stopPropagation={() => startInstall(b.id)}>
-                    {@html iconSvg.download}
-                  </button>
-                {/if}
+          {#if microphones.length === 0}
+            <div class="mic-warning">
+              <div class="mic-warning-icon">{@html iconSvg.mic}</div>
+              <div class="mic-warning-text">
+                <span class="mic-warning-title">{t(uiLang, 'diag_no_microphone')}</span>
+                <span class="mic-warning-hint">{t(uiLang, 'onboarding_no_mic_hint')}</span>
               </div>
-
-              <!-- Progress bar (persists across step navigation) -->
-              {#if downloading}
-                <div class="dl-progress">
-                  <div class="dl-bar">
-                    <div class="dl-fill" style="width: {state.percent}%"></div>
-                  </div>
-                  <div class="dl-meta">
-                    <span>{state.stageText}</span>
-                    <span>{Math.round(state.percent)}%</span>
-                  </div>
-                </div>
-              {/if}
-
-              <!-- Info panel: shown when user clicks the card body (not ⬇ icon) -->
-              {#if showInfo}
-                <div class="info-panel">
-                  <p class="info-text">
-                    {needsInstall
-                      ? t(uiLang, 'onboarding_gpu_install_runtime')
-                      : t(uiLang, 'onboarding_gpu_download').replace('{size}', String(b.downloadSizeMB || '?'))}
-                  </p>
-                  <div class="info-btns">
-                    <button class="btn-cancel" on:click={() => infoOpenId = null}>
-                      {t(uiLang, 'onboarding_cancel')}
-                    </button>
-                    <button class="btn-ok" on:click={() => startInstall(b.id)}>
-                      {needsInstall ? t(uiLang, 'onboarding_install_btn') : t(uiLang, 'onboarding_download_btn')}
-                    </button>
-                  </div>
-                </div>
-              {/if}
-
-              <!-- Error: show text + retry -->
-              {#if hasError}
-                <div class="error-row">
-                  <span class="error-text">{state.error}</span>
-                  <button class="btn-retry" on:click={() => startInstall(b.id)}>
-                    {t(uiLang, 'onboarding_download_btn')}
-                  </button>
-                </div>
-              {/if}
-            </div>
-          {/each}
-
-          <!-- CPU — always available -->
-          {#if cpuBackend}
-            <div class="acc-card" class:selected={backend === 'cpu' || (gpuBackends.length === 0)}
-              on:click={() => backend = 'cpu'}
-              role="button" tabindex="0"
-              on:keydown={(e) => e.key === 'Enter' && (backend = 'cpu')}>
-              <div class="acc-card-header">
-                <div class="acc-icon">{@html iconSvg.cpu}</div>
-                <div class="acc-info">
-                  <div class="acc-name">
-                    {cpuBackend.name}
-                    <span class="badge-speed speed-slow">{speedLabel('cpu')}</span>
-                  </div>
-                  <div class="acc-status status-ready">{t(uiLang, 'onboarding_cpu_desc')}</div>
-                </div>
-                <div class="acc-select-dot" class:dot-active={backend === 'cpu' || gpuBackends.length === 0}></div>
-              </div>
-            </div>
-          {/if}
-        </div>
-
-        <!-- "Next during download" warning banner -->
-        {#if nextWarning}
-          <div class="next-warning">
-            <strong>{t(uiLang, 'onboarding_next_warning_title')}</strong>
-            <p>{t(uiLang, 'onboarding_next_warning_body')}</p>
-            <button class="btn-ok" on:click={() => { nextWarning = false; saveSettings(false); step++; }}>
-              {t(uiLang, 'onboarding_next_ok')}
-            </button>
-          </div>
-        {/if}
-
-      <!-- ── Step 4: First Preset ── -->
-      {:else if step === 4}
-        <h2 class="step-title">{t(uiLang, 'onboarding_step4_title')}</h2>
-        <p class="step-hint">{t(uiLang, 'onboarding_step4_hint')}</p>
-
-        <div class="field">
-          <label for="preset-name" class="field-label">{t(uiLang, 'name')}</label>
-          <input
-            id="preset-name"
-            class="input"
-            type="text"
-            placeholder={t(uiLang, 'onboarding_step4_name_placeholder')}
-            bind:value={presetName}
-          />
-        </div>
-
-        <div class="field">
-          <!-- svelte-ignore a11y-label-has-associated-control -->
-          <label class="field-label">{t(uiLang, 'hotkey')}</label>
-          <HotkeyCapture bind:value={presetHotkey} bind:capturing={presetCapturing} lang={uiLang} />
-        </div>
-
-        <div class="field">
-          <!-- svelte-ignore a11y-label-has-associated-control -->
-          <label class="field-label">{t(uiLang, 'model')}</label>
-          {#if downloadedModels.length === 0}
-            <div class="model-empty">
-              <span class="model-empty-text">{t(uiLang, 'onboarding_model_none')}</span>
-              <button class="btn-link" on:click={() => dispatch('openModels')}>
-                {t(uiLang, 'manageModels')} →
-              </button>
             </div>
           {:else}
-            <select class="select" bind:value={presetModel}>
-              {#each downloadedModels as m}
-                <option value={m.name}>{m.name} ({m.size})</option>
+            <select id="mic-select" class="select" bind:value={microphoneId}>
+              <option value="">{t(uiLang, 'default_mic')}</option>
+              {#each microphones as mic (mic.id)}
+                <option value={mic.id}>{mic.name}{mic.isDefault ? ' ★' : ''}</option>
               {/each}
             </select>
           {/if}
         </div>
 
-        <div class="field">
-          <!-- svelte-ignore a11y-label-has-associated-control -->
-          <label class="field-label">{t(uiLang, 'inputMode')}</label>
-          <div class="pill-row">
-            <button class="pill" class:active={presetInputMode === 'hold'}
-              on:click={() => presetInputMode = 'hold'}
-              title={t(uiLang, 'tip_inputMode')}>
-              {t(uiLang, 'hold')}
+      <!-- ==================== STEP 2: Downloads (Optional) ==================== -->
+      {:else if step === 2}
+        <h2 class="step-title">{t(uiLang, 'onboarding_step2_title_new')}</h2>
+        <p class="step-hint">{t(uiLang, 'onboarding_step2_hint_new')}</p>
+
+        <!-- MODEL SECTION -->
+        <div class="section">
+          <div class="section-header">
+            <span class="section-label">{t(uiLang, 'onboarding_model_section')}</span>
+            <button class="btn-link-sm" on:click={() => dispatch('openModels')}>
+              {t(uiLang, 'manageModels')} →
             </button>
-            <button class="pill" class:active={presetInputMode === 'toggle'}
-              on:click={() => presetInputMode = 'toggle'}
-              title={t(uiLang, 'tip_inputMode')}>
-              {t(uiLang, 'toggle')}
-            </button>
+          </div>
+
+          {#if downloadedModels.length > 0}
+            <div class="model-ready">
+              <span class="model-ready-icon">{@html iconSvg.check}</span>
+              <span class="model-ready-text">
+                {downloadedModels.length === 1
+                  ? downloadedModels[0].name
+                  : `${downloadedModels.length} ${t(uiLang, 'onboarding_models_ready')}`}
+              </span>
+            </div>
+          {:else}
+            <p class="section-note">{t(uiLang, 'onboarding_model_explain')}</p>
+            <div class="model-list">
+              {#each recommendedModels as m (m.name)}
+                {@const mState = getModelState(m.name)}
+                <div class="model-item">
+                  <div class="model-item-info">
+                    <span class="model-item-name">{m.name}</span>
+                    <span class="model-item-size">{m.size}</span>
+                  </div>
+                  {#if mState.status === 'downloading'}
+                    <div class="model-item-progress">
+                      <div class="mini-bar">
+                        <div class="mini-fill" style="width: {mState.percent}%"></div>
+                      </div>
+                      <span class="mini-pct">{Math.round(mState.percent)}%</span>
+                    </div>
+                  {:else if mState.status === 'done'}
+                    <span class="model-item-done">{@html iconSvg.check}</span>
+                  {:else if mState.status === 'error'}
+                    <button class="btn-sm" on:click={() => startModelDownload(m.name)}>
+                      {t(uiLang, 'onboarding_retry')}
+                    </button>
+                  {:else}
+                    <button class="btn-sm" on:click={() => startModelDownload(m.name)}>
+                      {@html iconSvg.download}
+                      <span>{t(uiLang, 'modelGet')}</span>
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+
+        <!-- GPU BACKEND SECTION -->
+        <div class="section">
+          <div class="section-header">
+            <span class="section-label">{t(uiLang, 'onboarding_gpu_section')}</span>
+          </div>
+          <p class="section-note">{t(uiLang, 'onboarding_gpu_explain')}</p>
+
+          <div class="acc-list">
+            {#each visibleGpuBackends as b (b.id)}
+              {@const state = getState(b.id)}
+              {@const isReady = (b.compiled && b.systemAvailable) || state.status === 'done'}
+              {@const needsDL = b.systemAvailable && !b.compiled && state.status === 'idle'}
+              {@const needsInstall = b.canInstall && !b.systemAvailable && state.status === 'idle'}
+              {@const badDriver = b.unavailableReason === 'no_driver'}
+              {@const downloading = state.status === 'downloading'}
+              {@const done = state.status === 'done'}
+              {@const hasError = state.status === 'error'}
+              {@const showInfo = infoOpenId === b.id && !downloading}
+
+              <div class="acc-card" class:selected={backend === b.id} class:downloading>
+                <div class="acc-card-header"
+                  on:click={() => {
+                    if (isReady || done) { backend = b.id; infoOpenId = null; }
+                    else if ((needsDL || needsInstall) && !downloading) { openInfo(b.id); }
+                  }}
+                  role="button" tabindex="0"
+                  on:keydown={(e) => { if (e.key === 'Enter') {
+                    if (isReady || done) { backend = b.id; infoOpenId = null; }
+                    else if (needsDL || needsInstall) { openInfo(b.id); }
+                  }}}>
+                  <div class="acc-icon">{@html backendIcon(b.id)}</div>
+                  <div class="acc-info">
+                    <div class="acc-name">
+                      {b.name}
+                      <span class="badge-speed">{speedLabel(b.id)}</span>
+                      {#if b.recommended && (isReady || needsDL || needsInstall)}
+                        <span class="badge-rec">{t(uiLang, 'backendRecommended')}</span>
+                      {/if}
+                      {#if done || (b.compiled && b.systemAvailable)}
+                        <span class="badge-ok">✓</span>
+                      {/if}
+                    </div>
+                    <div class="acc-gpu">{hwLabel(b)}</div>
+                    <div class="acc-explain">{backendExplanation(b)}</div>
+                    <div class="acc-status" class:status-ready={isReady || done} class:status-error={hasError}>
+                      {gpuStatusText(b)}
+                    </div>
+                  </div>
+                  {#if downloading}
+                    <div class="acc-right-icon">
+                      <svg class="spin-anim" viewBox="0 0 20 20" fill="none">
+                        <circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-dasharray="14 33"/>
+                      </svg>
+                    </div>
+                  {:else if isReady || done}
+                    <div class="acc-select-dot" class:dot-active={backend === b.id}></div>
+                  {:else if needsDL || needsInstall}
+                    <button class="acc-dl-icon"
+                      title={needsDL ? t(uiLang, 'onboarding_download_btn') : t(uiLang, 'onboarding_install_btn')}
+                      on:click|stopPropagation={() => startInstall(b.id)}>
+                      {@html iconSvg.download}
+                    </button>
+                  {/if}
+                </div>
+
+                <!-- Progress bar -->
+                {#if downloading}
+                  <div class="dl-progress">
+                    <div class="dl-bar">
+                      <div class="dl-fill" style="width: {state.percent}%"></div>
+                    </div>
+                    <div class="dl-meta">
+                      <span>{state.stageText}</span>
+                      <span>{Math.round(state.percent)}%</span>
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- Info panel -->
+                {#if showInfo}
+                  <div class="info-panel">
+                    <p class="info-text">
+                      {needsInstall
+                        ? t(uiLang, 'onboarding_gpu_install_runtime')
+                        : t(uiLang, 'onboarding_gpu_download').replace('{size}', String(b.downloadSizeMB || '?'))}
+                    </p>
+                    <div class="info-btns">
+                      <button class="btn-cancel" on:click={() => infoOpenId = null}>
+                        {t(uiLang, 'onboarding_cancel')}
+                      </button>
+                      <button class="btn-ok" on:click={() => startInstall(b.id)}>
+                        {needsInstall ? t(uiLang, 'onboarding_install_btn') : t(uiLang, 'onboarding_download_btn')}
+                      </button>
+                    </div>
+                  </div>
+                {/if}
+
+                <!-- Error -->
+                {#if hasError}
+                  <div class="error-row">
+                    <span class="error-text">{state.error}</span>
+                    <button class="btn-retry" on:click={() => startInstall(b.id)}>
+                      {t(uiLang, 'onboarding_retry')}
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            {/each}
+
+            <!-- CPU -->
+            {#if cpuBackend}
+              <div class="acc-card" class:selected={backend === 'cpu' || (gpuBackends.length === 0)}
+                on:click={() => backend = 'cpu'}
+                role="button" tabindex="0"
+                on:keydown={(e) => e.key === 'Enter' && (backend = 'cpu')}>
+                <div class="acc-card-header">
+                  <div class="acc-icon">{@html iconSvg.cpu}</div>
+                  <div class="acc-info">
+                    <div class="acc-name">
+                      {cpuBackend.name}
+                      <span class="badge-speed speed-slow">{speedLabel('cpu')}</span>
+                    </div>
+                    <div class="acc-status status-ready">{t(uiLang, 'onboarding_cpu_desc')}</div>
+                  </div>
+                  <div class="acc-select-dot" class:dot-active={backend === 'cpu' || gpuBackends.length === 0}></div>
+                </div>
+              </div>
+            {/if}
           </div>
         </div>
 
-        <div class="field">
-          <label for="preset-lang" class="field-label">{t(uiLang, 'language')}</label>
-          <select id="preset-lang" class="select" bind:value={presetLanguage}>
-            {#each TRANSCRIPTION_LANGS as l}
-              <option value={l.code}>{l.label}</option>
-            {/each}
-          </select>
-        </div>
+        <!-- UNIFIED PROGRESS AREA -->
+        {#if activeModelDL || activeBackendDL}
+          <div class="unified-progress">
+            <div class="unified-progress-label">{t(uiLang, 'onboarding_download_active')}</div>
+            {#if activeModelDL}
+              <div class="unified-progress-item">
+                <span class="unified-item-name">{t(uiLang, 'model')}: {activeModelDL[0]}</span>
+                <div class="unified-bar">
+                  <div class="unified-fill" style="width: {activeModelDL[1].percent}%"></div>
+                </div>
+                <span class="unified-pct">{Math.round(activeModelDL[1].percent)}%</span>
+              </div>
+            {/if}
+            {#if activeBackendDL}
+              <div class="unified-progress-item">
+                <span class="unified-item-name">{t(uiLang, 'backend')}: {activeBackendDL[0]}</span>
+                <div class="unified-bar">
+                  <div class="unified-fill" style="width: {activeBackendDL[1].percent}%"></div>
+                </div>
+                <span class="unified-pct">{Math.round(activeBackendDL[1].percent)}%</span>
+              </div>
+            {/if}
+            <p class="unified-note">{t(uiLang, 'onboarding_download_bg_note')}</p>
+          </div>
+        {/if}
+
       {/if}
     </div>
 
     <!-- Footer -->
     <div class="card-footer">
-      {#if step > 1}
-        <button class="btn-back" on:click={back}>{t(uiLang, 'onboarding_back')}</button>
-      {:else}
-        <div></div>
-      {/if}
-
-      {#if step < TOTAL_STEPS}
-        <button class="btn-next" on:click={next}>
-          {t(uiLang, 'onboarding_next')} →
-          {#if step === 3 && isDownloading}
-            <span class="btn-dl-badge">⟳</span>
-          {/if}
+      <div class="footer-left">
+        {#if step > 1}
+          <button class="btn-back" on:click={back}>{t(uiLang, 'onboarding_back')}</button>
+        {:else}
+          <div></div>
+        {/if}
+      </div>
+      <div class="footer-right">
+        <button class="btn-skip" on:click={skip}>
+          {step === 2 ? t(uiLang, 'onboarding_skip_downloads') : t(uiLang, 'onboarding_skip')}
         </button>
-      {:else}
-        <button class="btn-finish" on:click={finish}>{t(uiLang, 'onboarding_finish')}</button>
-      {/if}
+        {#if step < TOTAL_STEPS}
+          <button class="btn-next" on:click={next}>
+            {t(uiLang, 'onboarding_next')} →
+          </button>
+        {:else}
+          <button class="btn-finish" on:click={finish}>
+            {t(uiLang, 'onboarding_finish')}
+            {#if isAnyDownloading}
+              <span class="btn-dl-badge">⟳</span>
+            {/if}
+          </button>
+        {/if}
+      </div>
     </div>
   </div>
 </div>
@@ -582,7 +629,7 @@
   }
 
   .card {
-    width: 420px;
+    width: 460px;
     max-height: 92vh;
     display: flex;
     flex-direction: column;
@@ -649,16 +696,98 @@
   .pill.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); font-weight: 500; }
 
   /* Inputs */
-  .select, .input {
+  .select {
     width: 100%; padding: 8px 10px; border-radius: 8px;
     border: 1px solid var(--toggle-border, var(--border-color));
     background: var(--bg-input, var(--bg-page));
     color: var(--text-secondary); font-size: 14px; outline: none;
     box-sizing: border-box; transition: border-color .14s;
   }
-  .select:focus, .input:focus { border-color: var(--accent); }
+  .select:focus { border-color: var(--accent); }
 
-  /* ── Acceleration cards ── */
+  /* Microphone warning */
+  .mic-warning {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 14px; border-radius: 10px;
+    border: 1px solid var(--accent-red, #ef4444);
+    background: rgba(239, 68, 68, 0.06);
+  }
+  .mic-warning-icon {
+    width: 20px; height: 20px; flex-shrink: 0;
+    color: var(--accent-red, #ef4444);
+  }
+  .mic-warning-icon :global(svg) { width: 20px; height: 20px; display: block; }
+  .mic-warning-text { display: flex; flex-direction: column; gap: 2px; }
+  .mic-warning-title { font-size: 13px; font-weight: 600; color: var(--accent-red, #ef4444); }
+  .mic-warning-hint { font-size: 12px; color: var(--text-tertiary); line-height: 1.4; }
+
+  /* Sections (Step 2) */
+  .section {
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .section-header {
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .section-label {
+    font-size: 11px; font-weight: 600; color: var(--text-tertiary);
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .section-note {
+    font-size: 12px; color: var(--text-tertiary); margin: 0; line-height: 1.5;
+  }
+
+  .btn-link-sm {
+    background: transparent; border: none; padding: 0;
+    color: var(--accent); font-size: 11px; cursor: pointer;
+    opacity: .85; transition: opacity .14s;
+  }
+  .btn-link-sm:hover { opacity: 1; }
+
+  /* Model section */
+  .model-ready {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; border-radius: 8px;
+    border: 1px solid #34d399;
+    background: rgba(52, 211, 153, 0.06);
+  }
+  .model-ready-icon {
+    width: 18px; height: 18px; color: #34d399; flex-shrink: 0;
+  }
+  .model-ready-icon :global(svg) { width: 18px; height: 18px; display: block; }
+  .model-ready-text { font-size: 13px; color: var(--text-secondary); }
+
+  .model-list { display: flex; flex-direction: column; gap: 6px; }
+  .model-item {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 12px; border-radius: 8px;
+    border: 1px solid var(--border-color);
+    gap: 8px;
+  }
+  .model-item-info { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+  .model-item-name { font-size: 13px; color: var(--text-primary); font-weight: 500; }
+  .model-item-size { font-size: 11px; color: var(--text-tertiary); }
+
+  .model-item-progress { display: flex; align-items: center; gap: 8px; flex-shrink: 0; width: 120px; }
+  .mini-bar { flex: 1; height: 4px; background: var(--border-subtle, rgba(255,255,255,.07)); border-radius: 2px; overflow: hidden; }
+  .mini-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s ease; }
+  .mini-pct { font-size: 11px; color: var(--text-tertiary); width: 30px; text-align: right; }
+
+  .model-item-done {
+    width: 18px; height: 18px; color: #34d399; flex-shrink: 0;
+  }
+  .model-item-done :global(svg) { width: 18px; height: 18px; display: block; }
+
+  .btn-sm {
+    display: flex; align-items: center; gap: 4px;
+    padding: 5px 10px; border-radius: 6px;
+    background: var(--accent-dim); border: 1px solid var(--accent);
+    color: var(--accent); font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all .14s; flex-shrink: 0;
+  }
+  .btn-sm:hover { background: var(--accent); color: #fff; }
+  .btn-sm :global(svg) { width: 14px; height: 14px; display: block; }
+
+  /* Acceleration cards */
   .acc-list { display: flex; flex-direction: column; gap: 8px; }
 
   .acc-card {
@@ -695,6 +824,7 @@
     display: flex; align-items: center; gap: 6px;
   }
   .acc-gpu { font-size: 12px; color: var(--text-tertiary); }
+  .acc-explain { font-size: 11px; color: var(--text-tertiary); line-height: 1.4; opacity: 0.8; }
   .acc-status { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
   .acc-status.status-ready { color: #34d399; }
   .acc-status.status-error { color: var(--accent-red, #ef4444); }
@@ -704,9 +834,7 @@
     background: var(--accent-dim); color: var(--accent);
     font-weight: 600; letter-spacing: .04em;
   }
-  .badge-ok {
-    font-size: 11px; color: #34d399;
-  }
+  .badge-ok { font-size: 11px; color: #34d399; }
   .badge-speed {
     font-size: 10px; padding: 1px 5px; border-radius: 4px;
     background: rgba(255,255,255,.06);
@@ -723,7 +851,6 @@
   }
   .dot-active { border-color: var(--accent); background: var(--accent); }
 
-  /* Download icon button */
   .acc-dl-icon {
     background: transparent; border: none;
     color: var(--accent);
@@ -736,7 +863,6 @@
   .acc-dl-icon:hover { opacity: .7; background: var(--accent-dim); }
   .acc-dl-icon :global(svg) { width: 20px; height: 20px; display: block; }
 
-  /* Spinner for downloading state */
   .acc-right-icon {
     width: 20px; height: 20px; flex-shrink: 0;
     margin-top: 2px; color: var(--accent);
@@ -745,23 +871,18 @@
   .acc-right-icon :global(svg) { width: 20px; height: 20px; display: block; }
   .spin-anim { animation: spin 0.9s linear infinite; }
 
-  /* Progress inside card */
   .dl-progress { padding: 0 14px 12px; }
   .dl-bar { height: 4px; background: var(--border-subtle, rgba(255,255,255,.07)); border-radius: 2px; overflow: hidden; }
   .dl-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s ease; }
   .dl-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-tertiary); margin-top: 4px; }
 
-
-  /* Info panel (opens when card body is clicked) */
   .info-panel {
     padding: 10px 14px 12px;
     border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06));
     background: var(--bg-input, rgba(255,255,255,.03));
     display: flex; flex-direction: column; gap: 8px;
   }
-  .info-text {
-    font-size: 12px; color: var(--text-secondary); margin: 0; line-height: 1.5;
-  }
+  .info-text { font-size: 12px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
   .info-btns { display: flex; gap: 8px; }
   .btn-cancel {
     flex: 1; padding: 7px; border-radius: 7px;
@@ -777,7 +898,6 @@
   }
   .btn-ok:hover { opacity: .85; }
 
-  /* Error row */
   .error-row {
     display: flex; align-items: center; gap: 8px;
     padding: 6px 14px 10px; flex-wrap: wrap;
@@ -791,34 +911,39 @@
   }
   .btn-retry:hover { opacity: .85; }
 
-  /* "Next during download" warning */
-  .next-warning {
-    padding: 12px 14px;
+  /* Unified progress area */
+  .unified-progress {
+    padding: 14px;
     background: var(--bg-input, rgba(255,255,255,.04));
     border: 1px solid var(--accent);
     border-radius: 10px;
-    display: flex; flex-direction: column; gap: 6px;
+    display: flex; flex-direction: column; gap: 10px;
   }
-  .next-warning strong { font-size: 13px; color: var(--text-primary); }
-  .next-warning p { font-size: 12px; color: var(--text-tertiary); margin: 0; line-height: 1.5; }
-  .next-warning .btn-ok { align-self: flex-end; flex: none; padding: 6px 16px; }
-
-  /* Link button (e.g. "Manage Models →") */
-  .btn-link {
-    background: transparent; border: none; padding: 0;
-    color: var(--accent); font-size: 13px; cursor: pointer;
-    text-decoration: underline; text-underline-offset: 2px; opacity: .85;
-    transition: opacity .14s;
+  .unified-progress-label {
+    font-size: 12px; font-weight: 600; color: var(--accent);
   }
-  .btn-link:hover { opacity: 1; }
-
-  /* Model empty */
-  .model-empty {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 12px; border-radius: 8px;
-    border: 1px dashed var(--border-hover); background: transparent;
+  .unified-progress-item {
+    display: flex; align-items: center; gap: 10px;
   }
-  .model-empty-text { font-size: 13px; color: var(--text-tertiary); }
+  .unified-item-name {
+    font-size: 12px; color: var(--text-secondary); width: 110px; flex-shrink: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .unified-bar {
+    flex: 1; height: 6px; background: var(--border-subtle, rgba(255,255,255,.07));
+    border-radius: 3px; overflow: hidden;
+  }
+  .unified-fill {
+    height: 100%; background: var(--accent); border-radius: 3px;
+    transition: width .3s ease;
+  }
+  .unified-pct {
+    font-size: 12px; color: var(--text-tertiary); width: 36px; text-align: right;
+    font-family: ui-monospace, monospace;
+  }
+  .unified-note {
+    font-size: 11px; color: var(--text-tertiary); margin: 0; line-height: 1.4;
+  }
 
   /* Footer */
   .card-footer {
@@ -828,12 +953,24 @@
     border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06));
     gap: 12px;
   }
+  .footer-left { display: flex; gap: 8px; }
+  .footer-right { display: flex; gap: 8px; align-items: center; }
+
   .btn-back {
     background: transparent; border: 1px solid var(--border-color);
     border-radius: 8px; color: var(--text-secondary);
     font-size: 14px; padding: 8px 16px; cursor: pointer; transition: all .15s;
   }
   .btn-back:hover { border-color: var(--border-hover); color: var(--text-primary); }
+
+  .btn-skip {
+    background: transparent; border: none;
+    color: var(--text-tertiary); font-size: 13px;
+    cursor: pointer; transition: color .14s;
+    padding: 8px 12px;
+  }
+  .btn-skip:hover { color: var(--text-secondary); }
+
   .btn-next, .btn-finish {
     background: var(--accent); border: none; border-radius: 8px;
     color: #fff; font-size: 14px; font-weight: 600;

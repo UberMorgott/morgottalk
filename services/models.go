@@ -213,10 +213,21 @@ func (s *ModelService) downloadWorker(ctx context.Context, name string) {
 		}
 	}
 
+	// Resume support: check if a partial temp file exists.
+	var resumeOffset int64
+	if info, err := os.Stat(tmpPath); err == nil && info.Size() > 0 {
+		resumeOffset = info.Size()
+		log.Printf("Model %s: found partial download (%d bytes), attempting resume", name, resumeOffset)
+	}
+
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		emit(DownloadProgress{ModelName: name, Done: true, Error: err.Error()})
 		return
+	}
+
+	if resumeOffset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", resumeOffset))
 	}
 
 	resp, err := httpClient.Do(req)
@@ -226,20 +237,39 @@ func (s *ModelService) downloadWorker(ctx context.Context, name string) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	var total int64
+	var f *os.File
+
+	switch resp.StatusCode {
+	case http.StatusPartialContent:
+		// Server supports Range — append to existing temp file.
+		total = resumeOffset + resp.ContentLength
+		f, err = os.OpenFile(tmpPath, os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			emit(DownloadProgress{ModelName: name, Done: true, Error: err.Error()})
+			return
+		}
+		log.Printf("Model %s: resuming from %d / %d bytes", name, resumeOffset, total)
+
+	case http.StatusOK:
+		// Server does not support Range or resumeOffset was 0 — start fresh.
+		if resumeOffset > 0 {
+			log.Printf("Model %s: server does not support Range, restarting download", name)
+		}
+		resumeOffset = 0
+		total = resp.ContentLength
+		f, err = os.Create(tmpPath)
+		if err != nil {
+			emit(DownloadProgress{ModelName: name, Done: true, Error: err.Error()})
+			return
+		}
+
+	default:
 		emit(DownloadProgress{ModelName: name, Done: true, Error: fmt.Sprintf("HTTP %d", resp.StatusCode)})
 		return
 	}
 
-	total := resp.ContentLength
-
-	f, err := os.Create(tmpPath)
-	if err != nil {
-		emit(DownloadProgress{ModelName: name, Done: true, Error: err.Error()})
-		return
-	}
-
-	var loaded int64
+	loaded := resumeOffset
 	buf := make([]byte, 64*1024)
 	lastEmit := int64(0)
 
@@ -247,8 +277,9 @@ func (s *ModelService) downloadWorker(ctx context.Context, name string) {
 		select {
 		case <-ctx.Done():
 			f.Close()
-			os.Remove(tmpPath)
+			// Keep the temp file for future resume (don't remove).
 			emit(DownloadProgress{ModelName: name, Done: true, Error: "cancelled"})
+			log.Printf("Model %s: download cancelled, %d bytes saved for resume", name, loaded)
 			return
 		default:
 		}
@@ -283,7 +314,8 @@ func (s *ModelService) downloadWorker(ctx context.Context, name string) {
 		}
 		if readErr != nil {
 			f.Close()
-			os.Remove(tmpPath)
+			// Keep partial file for resume on network errors.
+			log.Printf("Model %s: download interrupted at %d bytes: %v", name, loaded, readErr)
 			emit(DownloadProgress{ModelName: name, Done: true, Error: readErr.Error()})
 			return
 		}
@@ -297,7 +329,7 @@ func (s *ModelService) downloadWorker(ctx context.Context, name string) {
 		return
 	}
 
-	log.Printf("Model downloaded: %s", destPath)
+	log.Printf("Model downloaded: %s (%d bytes)", destPath, loaded)
 	emit(DownloadProgress{
 		ModelName:   name,
 		BytesLoaded: loaded,

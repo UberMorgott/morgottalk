@@ -66,6 +66,7 @@ func emitBackendProgress(backendID, stage, stageText string, pct float64, done b
 
 // downloadBackendDLL downloads a GPU backend library from GitHub Releases
 // and places it next to the executable. Reports progress via events.
+// Supports HTTP Range resume if a partial .tmp file exists from a previous attempt.
 func downloadBackendDLL(backendID string) error {
 	exe, err := os.Executable()
 	if err != nil {
@@ -77,23 +78,58 @@ func downloadBackendDLL(backendID string) error {
 
 	url := backendDownloadURL(backendID)
 
-	resp, err := httpClient.Get(url)
+	// Resume support: check if a partial temp file exists.
+	var resumeOffset int64
+	if info, err := os.Stat(tmpFile); err == nil && info.Size() > 0 {
+		resumeOffset = info.Size()
+		log.Printf("Backend %s: found partial download (%d bytes), attempting resume", backendID, resumeOffset)
+	}
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return fmt.Errorf("download failed: %w", err)
+	}
+	if resumeOffset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", resumeOffset))
+	}
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	var total int64
+	var f *os.File
+
+	switch resp.StatusCode {
+	case http.StatusPartialContent:
+		// Server supports Range — append to existing temp file.
+		total = resumeOffset + resp.ContentLength
+		f, err = os.OpenFile(tmpFile, os.O_WRONLY|os.O_APPEND, 0o644)
+		if err != nil {
+			return fmt.Errorf("cannot open temp file for resume: %w", err)
+		}
+		log.Printf("Backend %s: resuming from %d / %d bytes", backendID, resumeOffset, total)
+
+	case http.StatusOK:
+		// Server does not support Range or resumeOffset was 0 — start fresh.
+		if resumeOffset > 0 {
+			log.Printf("Backend %s: server does not support Range, restarting download", backendID)
+		}
+		resumeOffset = 0
+		total = resp.ContentLength
+		f, err = os.Create(tmpFile)
+		if err != nil {
+			return fmt.Errorf("cannot create file: %w", err)
+		}
+
+	default:
 		return fmt.Errorf("download failed: HTTP %d from %s", resp.StatusCode, url)
 	}
 
-	f, err := os.Create(tmpFile)
-	if err != nil {
-		return fmt.Errorf("cannot create file: %w", err)
-	}
-	total := resp.ContentLength
+	loaded := resumeOffset
 	buf := make([]byte, 64*1024)
-	var loaded int64
 	var lastPct float64
 
 	for {
@@ -118,7 +154,8 @@ func downloadBackendDLL(backendID string) error {
 		}
 		if readErr != nil {
 			f.Close()
-			os.Remove(tmpFile)
+			// Keep partial file for resume on network errors.
+			log.Printf("Backend %s: download interrupted at %d bytes: %v", backendID, loaded, readErr)
 			return readErr
 		}
 	}
@@ -129,6 +166,8 @@ func downloadBackendDLL(backendID string) error {
 		os.Remove(tmpFile)
 		return fmt.Errorf("cannot place library: %w", err)
 	}
+
+	log.Printf("Backend %s: download complete (%d bytes)", backendID, loaded)
 
 	// Hot-load the backend into ggml so it's available immediately.
 	if loadBackendDLL(destFile) {
