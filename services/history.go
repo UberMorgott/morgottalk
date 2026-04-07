@@ -32,7 +32,13 @@ func (s *HistoryService) GetHistory() []config.HistoryEntry {
 func (s *HistoryService) AddEntry(text, language string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return config.AppendHistory(text, language)
+	if err := config.AppendHistory(text, language); err != nil {
+		return err
+	}
+	if app := application.Get(); app != nil {
+		app.Event.Emit("history:new", nil)
+	}
+	return nil
 }
 
 // ClearHistory removes all entries.

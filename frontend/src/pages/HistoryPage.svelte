@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
+  import { Events } from '@wailsio/runtime';
   import { GetHistory, ClearHistory, DeleteEntry } from '../../bindings/github.com/UberMorgott/transcribation/services/historyservice.js';
   import { GetGlobalSettings } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
   import { t } from '../lib/i18n';
@@ -8,6 +9,7 @@
   let entries: { text: string; timestamp: number; language: string }[] = [];
   let confirmClear = false;
   let lang: Lang = 'en';
+  let unsub: (() => void) | null = null;
 
   // Apply theme synchronously from localStorage — prevents flash before async RPC
   (() => {
@@ -30,6 +32,11 @@
       }
     } catch {}
     await loadHistory();
+    unsub = Events.On('history:new', () => { loadHistory(); });
+  });
+
+  onDestroy(() => {
+    if (unsub) unsub();
   });
 
   async function loadHistory() {

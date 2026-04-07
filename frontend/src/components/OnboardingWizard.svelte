@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
-  import { Events } from '@wailsio/runtime';
+  import { Events, Browser } from '@wailsio/runtime';
   import { SaveGlobalSettings, InstallBackend } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
   import { DownloadModel, GetAvailableModels } from '../../bindings/github.com/UberMorgott/transcribation/services/modelservice.js';
   import { t } from '../lib/i18n';
@@ -76,10 +76,6 @@
   $: isAnyDownloading =
     Object.values(installStates).some(s => s.status === 'downloading') ||
     Object.values(modelDownloadStates).some(s => s.status === 'downloading');
-
-  // Currently active download for unified progress area
-  $: activeModelDL = Object.entries(modelDownloadStates).find(([, s]) => s.status === 'downloading');
-  $: activeBackendDL = Object.entries(installStates).find(([, s]) => s.status === 'downloading');
 
   // Subscribe to events
   let unsubBackendProgress: (() => void) | null = null;
@@ -406,42 +402,44 @@
             <p class="section-note">{t(uiLang, 'onboarding_model_explain')}</p>
             <div class="model-list">
               {#each recommendedModels as m (m.name)}
-                {@const mState = getModelState(m.name)}
-                <div class="model-item">
-                  <div class="model-item-info">
-                    <div class="model-item-top">
-                      <span class="model-item-name">{m.name}</span>
-                      {#if m.category === 'fast'}
-                        <span class="model-cat-badge cat-fast">&#9889; Fast</span>
-                      {:else if m.category === 'balanced'}
-                        <span class="model-cat-badge cat-balanced">&#9878; Balanced</span>
-                      {:else if m.category === 'quality'}
-                        <span class="model-cat-badge cat-quality">&#128081; Best</span>
+                {@const mState = modelDownloadStates[m.name] || { status: 'idle', percent: 0, error: '' }}
+                <div class="model-item" class:model-item-downloading={mState.status === 'downloading'}>
+                  <div class="model-item-row">
+                    <div class="model-item-info">
+                      <div class="model-item-top">
+                        <span class="model-item-name">{m.name}</span>
+                        {#if m.category === 'fast'}
+                          <span class="model-cat-badge cat-fast">&#9889; Fast</span>
+                        {:else if m.category === 'balanced'}
+                          <span class="model-cat-badge cat-balanced">&#9878; Balanced</span>
+                        {:else if m.category === 'quality'}
+                          <span class="model-cat-badge cat-quality">&#128081; Best</span>
+                        {/if}
+                        <span class="model-item-size">{m.size}</span>
+                      </div>
+                      {#if m.description}
+                        <span class="model-item-desc">{m.description}</span>
                       {/if}
-                      <span class="model-item-size">{m.size}</span>
                     </div>
-                    {#if m.description}
-                      <span class="model-item-desc">{m.description}</span>
+                    {#if mState.status === 'downloading'}
+                      <span class="model-dl-pct">{Math.round(mState.percent)}%</span>
+                    {:else if mState.status === 'done'}
+                      <span class="model-item-done">{@html iconSvg.check}</span>
+                    {:else if mState.status === 'error'}
+                      <button class="btn-sm" on:click={() => startModelDownload(m.name)}>
+                        {t(uiLang, 'onboarding_retry')}
+                      </button>
+                    {:else}
+                      <button class="btn-sm" on:click={() => startModelDownload(m.name)}>
+                        {@html iconSvg.download}
+                        <span>{t(uiLang, 'modelGet')}</span>
+                      </button>
                     {/if}
                   </div>
                   {#if mState.status === 'downloading'}
-                    <div class="model-item-progress">
-                      <div class="mini-bar">
-                        <div class="mini-fill" style="width: {mState.percent}%"></div>
-                      </div>
-                      <span class="mini-pct">{Math.round(mState.percent)}%</span>
+                    <div class="model-progress-bar">
+                      <div class="model-progress-fill" class:model-progress-pulse={mState.percent === 0} style="width: {mState.percent === 0 ? 100 : mState.percent}%"></div>
                     </div>
-                  {:else if mState.status === 'done'}
-                    <span class="model-item-done">{@html iconSvg.check}</span>
-                  {:else if mState.status === 'error'}
-                    <button class="btn-sm" on:click={() => startModelDownload(m.name)}>
-                      {t(uiLang, 'onboarding_retry')}
-                    </button>
-                  {:else}
-                    <button class="btn-sm" on:click={() => startModelDownload(m.name)}>
-                      {@html iconSvg.download}
-                      <span>{t(uiLang, 'modelGet')}</span>
-                    </button>
                   {/if}
                 </div>
               {/each}
@@ -458,7 +456,7 @@
 
           <div class="acc-list">
             {#each visibleGpuBackends as b (b.id)}
-              {@const state = getState(b.id)}
+              {@const state = installStates[b.id] || { status: 'idle', stage: '', stageText: '', percent: 0, error: '' }}
               {@const isReady = (b.compiled && b.systemAvailable) || state.status === 'done'}
               {@const needsDL = b.systemAvailable && !b.compiled && state.status === 'idle'}
               {@const needsInstall = b.canInstall && !b.systemAvailable && state.status === 'idle'}
@@ -530,6 +528,24 @@
                   </div>
                 {/if}
 
+                <!-- Bad driver warning -->
+                {#if badDriver && !downloading && !done && !hasError}
+                  <div class="acc-action-row">
+                    <div class="bad-driver-hint">
+                      <span class="bad-driver-text">{t(uiLang, 'onboarding_gpu_bad_driver')}</span>
+                      {#if b.id === 'cuda'}
+                        <button class="btn-driver-link" on:click|stopPropagation={() => Browser.OpenURL('https://www.nvidia.com/download/index.aspx')}>
+                          {t(uiLang, 'onboarding_update_driver')}
+                        </button>
+                      {:else if b.id === 'vulkan'}
+                        <button class="btn-driver-link" on:click|stopPropagation={() => Browser.OpenURL('https://vulkan.gpuinfo.org/')}>
+                          {t(uiLang, 'onboarding_update_driver')}
+                        </button>
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
+
                 <!-- Progress bar -->
                 {#if downloading}
                   <div class="dl-progress">
@@ -588,32 +604,6 @@
             {/if}
           </div>
         </div>
-
-        <!-- UNIFIED PROGRESS AREA -->
-        {#if activeModelDL || activeBackendDL}
-          <div class="unified-progress">
-            <div class="unified-progress-label">{t(uiLang, 'onboarding_download_active')}</div>
-            {#if activeModelDL}
-              <div class="unified-progress-item">
-                <span class="unified-item-name">{t(uiLang, 'model')}: {activeModelDL[0]}</span>
-                <div class="unified-bar">
-                  <div class="unified-fill" style="width: {activeModelDL[1].percent}%"></div>
-                </div>
-                <span class="unified-pct">{Math.round(activeModelDL[1].percent)}%</span>
-              </div>
-            {/if}
-            {#if activeBackendDL}
-              <div class="unified-progress-item">
-                <span class="unified-item-name">{t(uiLang, 'backend')}: {activeBackendDL[0]}</span>
-                <div class="unified-bar">
-                  <div class="unified-fill" style="width: {activeBackendDL[1].percent}%"></div>
-                </div>
-                <span class="unified-pct">{Math.round(activeBackendDL[1].percent)}%</span>
-              </div>
-            {/if}
-            <p class="unified-note">{t(uiLang, 'onboarding_download_bg_note')}</p>
-          </div>
-        {/if}
 
       {/if}
     </div>
@@ -790,10 +780,33 @@
 
   .model-list { display: flex; flex-direction: column; gap: 6px; }
   .model-item {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; flex-direction: column;
     padding: 8px 12px; border-radius: 8px;
     border: 1px solid var(--border-color);
-    gap: 8px;
+    gap: 0;
+  }
+  .model-item-downloading {
+    border-color: var(--accent);
+  }
+  .model-item-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .model-dl-pct {
+    font-size: 12px; color: var(--accent); font-weight: 600;
+    font-family: ui-monospace, monospace; flex-shrink: 0;
+  }
+  .model-progress-bar {
+    margin-top: 8px; height: 6px; width: 100%;
+    background: var(--border-subtle, rgba(255,255,255,.07));
+    border-radius: 3px; overflow: hidden;
+  }
+  .model-progress-fill {
+    height: 100%; background: var(--accent); border-radius: 3px;
+    transition: width .3s ease;
+  }
+  .model-progress-pulse {
+    opacity: 0.3;
+    animation: pulse-fill 1.2s ease-in-out infinite;
   }
   .model-item-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
   .model-item-top { display: flex; align-items: center; gap: 6px; }
@@ -812,10 +825,7 @@
   .cat-balanced { color: #60a5fa; background: rgba(96, 165, 250, 0.12); }
   .cat-quality { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
 
-  .model-item-progress { display: flex; align-items: center; gap: 8px; flex-shrink: 0; width: 120px; }
-  .mini-bar { flex: 1; height: 4px; background: var(--border-subtle, rgba(255,255,255,.07)); border-radius: 2px; overflow: hidden; }
-  .mini-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s ease; }
-  .mini-pct { font-size: 11px; color: var(--text-tertiary); width: 30px; text-align: right; }
+  @keyframes pulse-fill { 0%, 100% { opacity: 0.15; } 50% { opacity: 0.4; } }
 
   .model-item-done {
     width: 18px; height: 18px; color: #34d399; flex-shrink: 0;
@@ -941,38 +951,21 @@
   }
   .btn-retry:hover { opacity: .85; }
 
-  /* Unified progress area */
-  .unified-progress {
-    padding: 14px;
-    background: var(--bg-input, rgba(255,255,255,.04));
-    border: 1px solid var(--accent);
-    border-radius: 10px;
-    display: flex; flex-direction: column; gap: 10px;
+  .bad-driver-hint {
+    display: flex; flex-direction: column; gap: 6px;
+    padding: 0 14px 10px;
   }
-  .unified-progress-label {
-    font-size: 12px; font-weight: 600; color: var(--accent);
+  .bad-driver-text {
+    font-size: 11px; color: #f59e0b;
   }
-  .unified-progress-item {
-    display: flex; align-items: center; gap: 10px;
+  .btn-driver-link {
+    font-size: 11px; padding: 4px 12px; border-radius: 6px;
+    border: 1px solid #f59e0b; background: transparent;
+    color: #f59e0b; cursor: pointer; width: fit-content;
+    transition: background 0.2s, color 0.2s;
   }
-  .unified-item-name {
-    font-size: 12px; color: var(--text-secondary); width: 110px; flex-shrink: 0;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  }
-  .unified-bar {
-    flex: 1; height: 6px; background: var(--border-subtle, rgba(255,255,255,.07));
-    border-radius: 3px; overflow: hidden;
-  }
-  .unified-fill {
-    height: 100%; background: var(--accent); border-radius: 3px;
-    transition: width .3s ease;
-  }
-  .unified-pct {
-    font-size: 12px; color: var(--text-tertiary); width: 36px; text-align: right;
-    font-family: ui-monospace, monospace;
-  }
-  .unified-note {
-    font-size: 11px; color: var(--text-tertiary); margin: 0; line-height: 1.4;
+  .btn-driver-link:hover {
+    background: #f59e0b; color: #000;
   }
 
   /* Footer */

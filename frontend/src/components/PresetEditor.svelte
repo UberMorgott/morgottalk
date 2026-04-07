@@ -42,7 +42,7 @@
     language: 'auto',
     useKBLayout: false,
     keepHistory: true,
-    enabled: false,
+    enabled: true,
   };
 
   $: downloadedModels = models.filter(m => m.downloaded);

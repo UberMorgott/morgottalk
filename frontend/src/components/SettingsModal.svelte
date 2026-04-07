@@ -293,52 +293,69 @@
             </svg>
           </div>
         {/if}
-        <!-- 2-stage component status for CUDA -->
-        {#if installingBackend === 'cuda' || (visibleBackends.find(b => b.id === 'cuda' && (b.canInstall || b.unavailableReason === 'not_compiled') && !(b.compiled && b.systemAvailable)))}
+        <!-- Backend install info card -->
+        {#if true}
           {@const cudaB = visibleBackends.find(b => b.id === 'cuda')}
-          {#if cudaB && !(cudaB.compiled && cudaB.systemAvailable)}
-            <div class="backend-stages">
-              <div class="backend-stage-item">
-                <span class="stage-icon">{cudaB.runtimeInstalled ? '✓' : '✗'}</span>
-                <span class="stage-text">{t(displayLang, cudaB.runtimeInstalled ? 'cuda_runtime_installed' : 'cuda_runtime_missing')}</span>
+          {@const showCudaStages = cudaB && !(cudaB.compiled && cudaB.systemAvailable) && (installingBackend === 'cuda' || cudaB.canInstall || cudaB.unavailableReason === 'not_compiled')}
+          {#if installingBackend || showCudaStages || backendMessage}
+          <div class="backend-install-card">
+            <!-- CUDA stages -->
+            {#if showCudaStages && cudaB}
+              <div class="install-stages">
+                <div class="install-stage-row">
+                  <span class="stage-icon">{cudaB.runtimeInstalled ? '✓' : '✗'}</span>
+                  <span class="stage-text">{t(displayLang, cudaB.runtimeInstalled ? 'cuda_runtime_installed' : 'cuda_runtime_missing')}</span>
+                </div>
+                <div class="install-stage-row">
+                  <span class="stage-icon">{cudaB.compiled ? '✓' : '✗'}</span>
+                  <span class="stage-text">{t(displayLang, cudaB.compiled ? 'cuda_dll_ready' : 'cuda_dll_missing')}</span>
+                  {#if !cudaB.compiled && cudaB.downloadSizeMB > 0}
+                    <span class="stage-size">~{cudaB.downloadSizeMB}{t(displayLang, 'mb')}</span>
+                  {/if}
+                </div>
               </div>
-              <div class="backend-stage-item">
-                <span class="stage-icon">{cudaB.compiled ? '✓' : '✗'}</span>
-                <span class="stage-text">{t(displayLang, cudaB.compiled ? 'cuda_dll_ready' : 'cuda_dll_missing')}</span>
-                {#if !cudaB.compiled && cudaB.downloadSizeMB > 0}
-                  <span class="stage-size">~{cudaB.downloadSizeMB}{t(displayLang, 'mb')}</span>
+            {/if}
+
+            <!-- Progress bar (downloading stages) -->
+            {#if (installStage === 'downloading' || installStage === 'downloading_runtime') && installProgress !== null}
+              <div class="install-progress">
+                {#if installingBackend === 'cuda'}
+                  <span class="install-step">{t(displayLang, installStage === 'downloading_runtime' ? 'cuda_step_1' : 'cuda_step_2')}</span>
+                {/if}
+                <span class="install-label">{t(displayLang, installStage === 'downloading_runtime' ? 'backendDownloadingRuntime' : 'backendDownloading')}</span>
+                <div class="install-bar">
+                  <div class="install-fill" style="width: {installProgress}%"></div>
+                </div>
+                <span class="install-pct">{Math.round(installProgress)}%</span>
+              </div>
+              {#if installStage === 'downloading_runtime'}
+                <div class="install-uac-hint">{t(displayLang, 'cuda_uac_warning')}</div>
+              {/if}
+
+            <!-- Installing stages (no progress, pulsing) -->
+            {:else if installStage === 'installing' || installStage === 'installing_runtime'}
+              <div class="install-status">
+                <span class="install-pulse"></span>
+                {#if installingBackend === 'cuda'}
+                  <span class="install-step">{t(displayLang, installStage === 'installing_runtime' ? 'cuda_step_1' : 'cuda_step_2')}</span>
+                {/if}
+                <span>{installStageText || t(displayLang, 'backendInstalling')}</span>
+              </div>
+              {#if installStage === 'installing_runtime'}
+                <div class="install-uac-hint">{t(displayLang, 'cuda_uac_warning')}</div>
+              {/if}
+
+            <!-- Final message (success/error + restart) -->
+            {:else if backendMessage}
+              <div class="install-message">
+                {backendMessage}
+                {#if showRestartButton}
+                  <button class="restart-btn" on:click={handleRestart}>{t(displayLang, 'backendRestart')}</button>
                 {/if}
               </div>
-            </div>
-          {/if}
+            {/if}
+          </div>
         {/if}
-        <!-- Download progress / messages -->
-        {#if (installStage === 'downloading_runtime') && installProgress !== null}
-          <div class="backend-message">
-            <span class="stage-step">{t(displayLang, 'cuda_step_1')}</span> {t(displayLang, 'backendDownloadingRuntime')} {Math.round(installProgress)}%
-          </div>
-          <div class="backend-uac-hint">{t(displayLang, 'cuda_uac_warning')}</div>
-        {:else if installStage === 'installing_runtime'}
-          <div class="backend-message">
-            <span class="stage-step">{t(displayLang, 'cuda_step_1')}</span> {installStageText || t(displayLang, 'backendInstalling')}
-          </div>
-          <div class="backend-uac-hint">{t(displayLang, 'cuda_uac_warning')}</div>
-        {:else if installStage === 'downloading' && installProgress !== null}
-          <div class="backend-message">
-            {#if installingBackend === 'cuda'}
-              <span class="stage-step">{t(displayLang, 'cuda_step_2')}</span>
-            {/if}
-            {t(displayLang, 'backendDownloading')} {Math.round(installProgress)}%
-          </div>
-        {:else if installStage === 'installing'}
-          <div class="backend-message">{installStageText || t(displayLang, 'backendInstalling')}</div>
-        {:else if backendMessage}
-          <div class="backend-message">
-            {backendMessage}
-            {#if showRestartButton}
-              <button class="restart-btn" on:click={handleRestart}>{t(displayLang, 'backendRestart')}</button>
-            {/if}
-          </div>
         {/if}
       </div>
 
@@ -648,16 +665,6 @@
     opacity: 0.8;
   }
 
-  .backend-message {
-    font-size: 11px;
-    color: var(--accent);
-    font-family: ui-monospace, monospace;
-    padding: 2px 0;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-  }
   .restart-btn {
     font-size: 11px;
     font-family: ui-monospace, monospace;
@@ -785,14 +792,23 @@
     flex: 1;
   }
 
-  /* 2-stage install status */
-  .backend-stages {
+  /* Backend install card */
+  .backend-install-card {
+    background: var(--bg-input, rgba(255, 255, 255, 0.04));
+    border-radius: 8px;
+    padding: 8px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 6px;
+    border: 1px solid var(--toggle-border);
+  }
+  .install-stages {
     display: flex;
     flex-direction: column;
     gap: 3px;
-    padding: 4px 0 0;
   }
-  .backend-stage-item {
+  .install-stage-row {
     display: flex;
     align-items: center;
     gap: 6px;
@@ -813,19 +829,91 @@
     opacity: 0.6;
     font-size: 9px;
   }
-  .stage-step {
+
+  /* Progress bar row */
+  .install-progress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    color: var(--text-secondary);
+  }
+  .install-step {
     font-weight: 600;
     color: var(--accent);
-    margin-right: 4px;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
-  .backend-uac-hint {
+  .install-label {
+    white-space: nowrap;
+    flex-shrink: 0;
+    color: var(--text-muted);
+  }
+  .install-bar {
+    flex: 1;
+    height: 4px;
+    background: var(--border-subtle, rgba(255, 255, 255, 0.07));
+    border-radius: 2px;
+    overflow: hidden;
+    min-width: 40px;
+  }
+  .install-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.3s ease;
+  }
+  .install-pct {
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    color: var(--accent);
+    width: 36px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  /* Installing status with pulse */
+  .install-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-family: ui-monospace, monospace;
+    color: var(--text-secondary);
+  }
+  .install-pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+    animation: pulse-dot 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 0.4; transform: scale(0.8); }
+    50% { opacity: 1; transform: scale(1.2); }
+  }
+
+  /* UAC hint */
+  .install-uac-hint {
     font-size: 10px;
     color: #f59e0b;
     font-family: ui-monospace, monospace;
-    padding: 1px 0 0;
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+
+  /* Final message */
+  .install-message {
+    font-size: 11px;
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
   }
 
   .models-btn {

@@ -350,6 +350,14 @@ func (s *ModelService) downloadWorker(ctx context.Context, name string) {
 	buf := make([]byte, 64*1024)
 	lastEmit := int64(0)
 
+	// Emit initial progress immediately so the frontend knows the download started.
+	emit(DownloadProgress{
+		ModelName:   name,
+		BytesLoaded: loaded,
+		BytesTotal:  total,
+		Percent:     0,
+	})
+
 	for {
 		select {
 		case <-ctx.Done():
