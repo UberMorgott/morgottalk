@@ -5,6 +5,7 @@ package services
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -22,10 +23,24 @@ const cudaComponents = "-s cudart_13.1 cublas_13.1"
 func installBackend(id string) (string, error) {
 	switch id {
 	case "cuda":
-		go installBackendAsync(id)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("recovered panic in installBackendAsync(%s): %v", id, r)
+				}
+			}()
+			installBackendAsync(id)
+		}()
 		return "installing", nil
 	case "vulkan":
-		go installBackendAsync(id)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("recovered panic in installBackendAsync(%s): %v", id, r)
+				}
+			}()
+			installBackendAsync(id)
+		}()
 		return "installing", nil
 	case "rocm":
 		return openURL("https://rocm.docs.amd.com/")
@@ -84,9 +99,16 @@ func installCUDARuntimeWindows(emit func(stage, stageText string, pct float64, d
 	emit("installing_runtime", "", 0, false, "")
 
 	logDone := make(chan struct{})
-	go watchCUDAInstallerLog(logDone, func(text string) {
-		emit("installing_runtime", text, 0, false, "")
-	})
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("recovered panic in watchCUDAInstallerLog: %v", r)
+			}
+		}()
+		watchCUDAInstallerLog(logDone, func(text string) {
+			emit("installing_runtime", text, 0, false, "")
+		})
+	}()
 
 	// Escape single quotes for PowerShell single-quoted strings ('' = literal ').
 	escapedPath := strings.ReplaceAll(installerPath, "'", "''")
@@ -244,7 +266,7 @@ func parseCUDALogStage(logPath string, offset int64) string {
 }
 
 func downloadFileWithProgress(url, dest string, onProgress func(pct float64)) error {
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return err
 	}

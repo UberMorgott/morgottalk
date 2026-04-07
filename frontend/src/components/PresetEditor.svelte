@@ -68,7 +68,7 @@
   }
 
   function handleSave() {
-    if (!form.name.trim()) form.name = 'Untitled';
+    if (!form.name.trim()) form.name = t(lang, 'untitled');
     dispatch('save', { ...form });
   }
 
@@ -107,7 +107,7 @@
         <label class="field-label">{t(lang, 'model')}</label>
         <div class="field-row">
           <select class="field-select" bind:value={form.modelName} on:change={onModelChange}>
-            {#each downloadedModels as m}
+            {#each downloadedModels as m (m.name)}
               <option value={m.name}>{m.name}</option>
             {/each}
           </select>
@@ -157,7 +157,7 @@
       <div class="field" title={t(lang, 'tip_language')}>
         <label class="field-label" for="editor-language">{t(lang, 'language')}</label>
         <select id="editor-language" class="field-select" class:field-disabled={languageDisabled || form.useKBLayout} bind:value={form.language} disabled={languageDisabled || form.useKBLayout}>
-          {#each languages as lng}
+          {#each languages as lng (lng.code)}
             <option value={lng.code}>{lng.name}</option>
           {/each}
         </select>

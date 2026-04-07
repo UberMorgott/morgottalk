@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onDestroy } from 'svelte';
   import { t } from '../lib/i18n';
   import type { Lang } from '../lib/i18n';
   import HotkeyCapture from './HotkeyCapture.svelte';
@@ -52,6 +52,8 @@
   let _saveTimer: ReturnType<typeof setTimeout>;
   let _openedId: string | null = null;
 
+  onDestroy(() => clearTimeout(_saveTimer));
+
   function debouncedSave(data: typeof form) {
     clearTimeout(_saveTimer);
     _saveTimer = setTimeout(() => dispatch('save', data), 400);
@@ -75,7 +77,7 @@
   // Auto-save on form change (debounced)
   $: if (initialized && expanded) {
     const data = { ...form };
-    if (!data.name.trim()) data.name = 'Untitled';
+    if (!data.name.trim()) data.name = t(lang, 'untitled');
     debouncedSave(data);
   }
 
@@ -192,7 +194,7 @@
             <label class="field-label">{t(lang, 'model')}</label>
             <div class="field-row">
               <select class="field-select" bind:value={form.modelName} on:change={onModelChange}>
-                {#each downloadedModels as m}
+                {#each downloadedModels as m (m.name)}
                   <option value={m.name}>{m.name}</option>
                 {/each}
               </select>
@@ -242,7 +244,7 @@
           <div class="field" title={t(lang, 'tip_language')}>
             <label class="field-label" for="card-language">{t(lang, 'language')}</label>
             <select id="card-language" class="field-select" class:field-disabled={languageDisabled || form.useKBLayout} bind:value={form.language} disabled={languageDisabled || form.useKBLayout}>
-              {#each languages as lng}
+              {#each languages as lng (lng.code)}
                 <option value={lng.code}>{lng.name}</option>
               {/each}
             </select>

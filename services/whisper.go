@@ -144,13 +144,12 @@ func (w *WhisperEngine) Transcribe(samples []float32, lang string, translate boo
 	}
 
 	nSegments := int(C.whisper_full_n_segments(w.ctx))
-	var result string
+	var b strings.Builder
 	for i := 0; i < nSegments; i++ {
-		text := C.GoString(C.whisper_full_get_segment_text(w.ctx, C.int(i)))
-		result += text
+		b.WriteString(C.GoString(C.whisper_full_get_segment_text(w.ctx, C.int(i))))
 	}
 
-	return result, nil
+	return b.String(), nil
 }
 
 const chunkSeconds = 25

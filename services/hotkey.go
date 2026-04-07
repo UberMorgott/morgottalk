@@ -238,7 +238,7 @@ func (m *HotkeyManager) captureKeyDown(kc uint16, pressedKeys map[uint16]bool) {
 // captureKeyUp handles key releases during capture mode.
 // Finalizes modifier-only captures when all modifiers are released.
 func (m *HotkeyManager) captureKeyUp(kc uint16, pressedKeys map[uint16]bool) {
-	if m.captureKeys == nil || len(m.captureKeys) == 0 || !isModifier(kc) {
+	if len(m.captureKeys) == 0 || !isModifier(kc) {
 		return
 	}
 

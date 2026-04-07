@@ -5,6 +5,7 @@ package services
 import (
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -12,7 +13,14 @@ import (
 )
 
 func installBackend(id string) (string, error) {
-	go installBackendAsyncLinux(id)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("recovered panic in installBackendAsyncLinux(%s): %v", id, r)
+			}
+		}()
+		installBackendAsyncLinux(id)
+	}()
 	return "installing", nil
 }
 
@@ -209,7 +217,7 @@ func installCUDAOpenSUSE(slug string) error {
 
 // downloadFile downloads a URL to a local path.
 func downloadFile(url, dest string) error {
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return err
 	}

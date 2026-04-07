@@ -4,13 +4,21 @@ package services
 
 import (
 	"fmt"
+	"log"
 	"os/exec"
 )
 
 func installBackend(id string) (string, error) {
 	switch id {
 	case "vulkan":
-		go installBackendAsyncDarwin(id)
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("recovered panic in installBackendAsyncDarwin(%s): %v", id, r)
+				}
+			}()
+			installBackendAsyncDarwin(id)
+		}()
 		return "installing", nil
 	case "metal":
 		// Metal is statically linked into the binary on macOS.

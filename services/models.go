@@ -182,7 +182,14 @@ func (s *ModelService) DownloadModel(name string) error {
 	s.downloading[name] = cancel
 	s.mu.Unlock()
 
-	go s.downloadWorker(ctx, name)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("recovered panic in downloadWorker: %v", r)
+			}
+		}()
+		s.downloadWorker(ctx, name)
+	}()
 	return nil
 }
 
@@ -212,7 +219,7 @@ func (s *ModelService) downloadWorker(ctx context.Context, name string) {
 		return
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		emit(DownloadProgress{ModelName: name, Done: true, Error: err.Error()})
 		return

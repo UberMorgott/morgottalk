@@ -1,9 +1,12 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import { t } from '../lib/i18n';
+  import type { Lang } from '../lib/i18n';
 
   export let type: 'error' | 'warning' | 'info' = 'info';
   export let message: string = '';
   export let dismissible: boolean = true;
+  export let lang: Lang = 'en';
 
   const dispatch = createEventDispatcher();
 
@@ -23,7 +26,7 @@
 
   {#if $$slots.default}
     <button class="toast-toggle-details" on:click={toggleDetails}>
-      {expanded ? 'Hide details' : 'Show details'}
+      {expanded ? t(lang, 'hide_details') : t(lang, 'show_details')}
     </button>
     {#if expanded}
       <div class="toast-details">
@@ -33,7 +36,7 @@
   {/if}
 
   {#if dismissible}
-    <button class="toast-dismiss" on:click={handleDismiss} title="Dismiss">×</button>
+    <button class="toast-dismiss" on:click={handleDismiss} title={t(lang, 'dismiss')}>×</button>
   {/if}
 </div>
 

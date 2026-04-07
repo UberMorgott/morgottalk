@@ -32,17 +32,18 @@ type TranscriptionResult struct {
 
 // PresetService manages presets, recording, and transcription.
 type PresetService struct {
-	mu          sync.Mutex
-	cfg         *config.AppConfig
-	engines     map[string]*WhisperEngine // preset ID → loaded engine
-	audio       *AudioCapture
-	history     *HistoryService
-	models      *ModelService
-	hotkeys     *HotkeyManager
-	states      map[string]string // preset ID → "idle"/"recording"/"processing"
-	lastText    string
-	recordTimer *time.Timer // auto-stop after maxRecordDuration
-	recordingID string      // preset ID being recorded (for auto-stop)
+	mu           sync.Mutex
+	cfg          *config.AppConfig
+	engines      map[string]*WhisperEngine // preset ID → loaded engine
+	audio        *AudioCapture
+	history      *HistoryService
+	models       *ModelService
+	hotkeys      *HotkeyManager
+	states       map[string]string // preset ID → "idle"/"recording"/"processing"
+	lastText     string
+	recordTimer  *time.Timer // auto-stop after maxRecordDuration
+	recordingID  string      // preset ID being recorded (for auto-stop)
+	shutdownOnce sync.Once
 }
 
 func NewPresetService(history *HistoryService, models *ModelService) *PresetService {
@@ -206,11 +207,20 @@ func (s *PresetService) CreatePreset(p config.Preset) config.Preset {
 	}
 	s.cfg.Presets = append(s.cfg.Presets, p)
 	s.states[p.ID] = "idle"
-	_ = config.Save(s.cfg)
+	if err := config.Save(s.cfg); err != nil {
+		log.Printf("config save failed: %v", err)
+	}
 	s.mu.Unlock() // release before activatePreset (must be called without lock)
 
 	if p.Enabled {
-		go s.activatePreset(&p) // register hotkey + optionally preload model
+		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("recovered panic in CreatePreset/activatePreset: %v", r)
+				}
+			}()
+			s.activatePreset(&p)
+		}()
 	}
 	return p
 }
@@ -226,7 +236,9 @@ func (s *PresetService) UpdatePreset(p config.Preset) error {
 
 	old := s.cfg.Presets[idx]
 	s.cfg.Presets[idx] = p
-	_ = config.Save(s.cfg)
+	if err := config.Save(s.cfg); err != nil {
+		log.Printf("config save failed: %v", err)
+	}
 	s.mu.Unlock()
 
 	// Only re-register if hotkey-related or model-related fields changed
@@ -235,6 +247,11 @@ func (s *PresetService) UpdatePreset(p config.Preset) error {
 
 	if hotkeyChanged || modelChanged {
 		go func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("recovered panic in UpdatePreset/reactivate: %v", r)
+				}
+			}()
 			if old.Enabled {
 				s.deactivatePreset(p.ID)
 			}
@@ -258,10 +275,19 @@ func (s *PresetService) DeletePreset(id string) error {
 
 	delete(s.states, id)
 	s.cfg.Presets = append(s.cfg.Presets[:idx], s.cfg.Presets[idx+1:]...)
-	_ = config.Save(s.cfg)
+	if err := config.Save(s.cfg); err != nil {
+		log.Printf("config save failed: %v", err)
+	}
 	s.mu.Unlock()
 
-	go s.deactivatePreset(id)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("recovered panic in DeletePreset/deactivatePreset: %v", r)
+			}
+		}()
+		s.deactivatePreset(id)
+	}()
 	return nil
 }
 
@@ -276,11 +302,18 @@ func (s *PresetService) SetPresetEnabled(id string, enabled bool) error {
 
 	s.cfg.Presets[idx].Enabled = enabled
 	p := s.cfg.Presets[idx] // copy
-	_ = config.Save(s.cfg)
+	if err := config.Save(s.cfg); err != nil {
+		log.Printf("config save failed: %v", err)
+	}
 	s.mu.Unlock()
 
 	// Run in background — hotkey.Register and model loading can block for seconds
 	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("recovered panic in SetPresetEnabled: %v", r)
+			}
+		}()
 		if enabled {
 			s.activatePreset(&p)
 		} else {
@@ -600,19 +633,21 @@ func (s *PresetService) ReloadConfig() {
 
 // Shutdown releases all resources.
 func (s *PresetService) Shutdown() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.shutdownOnce.Do(func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
 
-	if s.hotkeys != nil {
-		s.hotkeys.Stop()
-	}
-	for id, engine := range s.engines {
-		engine.Close()
-		delete(s.engines, id)
-	}
-	if s.audio != nil {
-		s.audio.Close()
-	}
+		if s.hotkeys != nil {
+			s.hotkeys.Stop()
+		}
+		for id, engine := range s.engines {
+			engine.Close()
+			delete(s.engines, id)
+		}
+		if s.audio != nil {
+			s.audio.Close()
+		}
+	})
 }
 
 // getOrLoadEngine returns a cached engine or loads a new one.
@@ -642,6 +677,11 @@ func (s *PresetService) getOrLoadEngine(p *config.Preset) (*WhisperEngine, error
 	}
 
 	s.mu.Lock()
+	if existing, ok := s.engines[p.ID]; ok {
+		engine.Close()
+		s.mu.Unlock()
+		return existing, nil
+	}
 	s.engines[p.ID] = engine
 	s.mu.Unlock()
 

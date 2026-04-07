@@ -8,9 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
+
+var httpClient = &http.Client{Timeout: 5 * time.Minute}
 
 const (
 	// Base URL for pre-compiled GPU backend libraries hosted on GitHub Releases.
@@ -74,7 +77,7 @@ func downloadBackendDLL(backendID string) error {
 
 	url := backendDownloadURL(backendID)
 
-	resp, err := http.Get(url)
+	resp, err := httpClient.Get(url)
 	if err != nil {
 		return fmt.Errorf("download failed: %w", err)
 	}
@@ -88,11 +91,6 @@ func downloadBackendDLL(backendID string) error {
 	if err != nil {
 		return fmt.Errorf("cannot create file: %w", err)
 	}
-	defer func() {
-		f.Close()
-		os.Remove(tmpFile)
-	}()
-
 	total := resp.ContentLength
 	buf := make([]byte, 64*1024)
 	var loaded int64
@@ -102,6 +100,8 @@ func downloadBackendDLL(backendID string) error {
 		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
 			if _, wErr := f.Write(buf[:n]); wErr != nil {
+				f.Close()
+				os.Remove(tmpFile)
 				return wErr
 			}
 			loaded += int64(n)
@@ -117,6 +117,8 @@ func downloadBackendDLL(backendID string) error {
 			break
 		}
 		if readErr != nil {
+			f.Close()
+			os.Remove(tmpFile)
 			return readErr
 		}
 	}
@@ -124,6 +126,7 @@ func downloadBackendDLL(backendID string) error {
 	f.Close()
 
 	if err := os.Rename(tmpFile, destFile); err != nil {
+		os.Remove(tmpFile)
 		return fmt.Errorf("cannot place library: %w", err)
 	}
 

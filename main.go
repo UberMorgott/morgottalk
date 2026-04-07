@@ -54,7 +54,9 @@ func main() {
 		presetService.FlushEngines()
 		cfg, _ := config.Load()
 		cfg.Backend = backendID
-		_ = config.Save(cfg)
+		if err := config.Save(cfg); err != nil {
+			log.Printf("config save failed: %v", err)
+		}
 		presetService.ReloadConfig()
 		log.Printf("Backend hot-switched to %q", backendID)
 	})
@@ -176,14 +178,16 @@ func main() {
 			// don't work on Windows; user can change behavior in Settings).
 			e.Cancel()
 			cfg.CloseAction = "tray"
-			_ = config.Save(cfg)
+			if err := config.Save(cfg); err != nil {
+				log.Printf("config save failed: %v", err)
+			}
 			mainWindow.Hide()
 		}
 	})
 
 	err := app.Run()
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 	}
 
 	presetService.Shutdown()

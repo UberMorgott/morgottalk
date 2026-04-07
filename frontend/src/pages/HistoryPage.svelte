@@ -35,7 +35,7 @@
   async function loadHistory() {
     try {
       entries = await GetHistory() || [];
-    } catch {}
+    } catch (e) { console.error('load history failed:', e); }
   }
 
   async function handleClear() {

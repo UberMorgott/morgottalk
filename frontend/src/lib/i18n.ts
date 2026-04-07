@@ -171,6 +171,8 @@ const translations: Record<string, Record<string, string>> = {
     // Post-onboarding banners
     hint_no_hotkey: "No hotkey assigned — click to set one",
     hint_no_model: "No model downloaded — click to open model manager",
+    untitled: "Untitled",
+    dismiss: "Dismiss",
   },
   ru: {
     settings: "Настройки",
@@ -344,6 +346,8 @@ const translations: Record<string, Record<string, string>> = {
     // Post-onboarding banners
     hint_no_hotkey: "Горячая клавиша не назначена — нажмите, чтобы назначить",
     hint_no_model: "Модель не загружена — нажмите для открытия менеджера моделей",
+    untitled: "Без названия",
+    dismiss: "Закрыть",
   },
   de: {
     settings: "Einstellungen",
@@ -511,6 +515,8 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_hw_anygpu: "Jede GPU",
     hint_no_hotkey: "Kein Tastenkürzel zugewiesen — klicken Sie zum Festlegen",
     hint_no_model: "Kein Modell heruntergeladen — klicken Sie zum Öffnen des Modellmanagers",
+    untitled: "Unbenannt",
+    dismiss: "Schließen",
   },
   es: {
     settings: "Configuración",
@@ -678,6 +684,8 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_hw_anygpu: "Cualquier GPU",
     hint_no_hotkey: "Ningún atajo asignado — haga clic para configurarlo",
     hint_no_model: "Ningún modelo descargado — haga clic para abrir el gestor de modelos",
+    untitled: "Sin título",
+    dismiss: "Cerrar",
   },
   fr: {
     settings: "Paramètres",
@@ -845,6 +853,8 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_hw_anygpu: "Tout GPU",
     hint_no_hotkey: "Aucun raccourci attribué — cliquez pour en définir un",
     hint_no_model: "Aucun modèle téléchargé — cliquez pour ouvrir le gestionnaire de modèles",
+    untitled: "Sans titre",
+    dismiss: "Fermer",
   },
   zh: {
     settings: "设置",
@@ -1012,6 +1022,8 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_hw_anygpu: "任意 GPU",
     hint_no_hotkey: "未分配快捷键 — 点击设置",
     hint_no_model: "未下载模型 — 点击打开模型管理器",
+    untitled: "无标题",
+    dismiss: "关闭",
   },
   ja: {
     settings: "設定",
@@ -1179,6 +1191,8 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_hw_anygpu: "すべてのGPU",
     hint_no_hotkey: "ホットキー未設定 — クリックして設定",
     hint_no_model: "モデル未ダウンロード — クリックしてモデルマネージャーを開く",
+    untitled: "無題",
+    dismiss: "閉じる",
   },
   pt: {
     settings: "Configurações",
@@ -1346,6 +1360,8 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_hw_anygpu: "Qualquer GPU",
     hint_no_hotkey: "Nenhum atalho atribuído — clique para definir um",
     hint_no_model: "Nenhum modelo baixado — clique para abrir o gerenciador de modelos",
+    untitled: "Sem título",
+    dismiss: "Fechar",
   },
   ko: {
     settings: "설정",
@@ -1513,6 +1529,8 @@ const translations: Record<string, Record<string, string>> = {
     onboarding_hw_anygpu: "모든 GPU",
     hint_no_hotkey: "단축키 미지정 — 클릭하여 설정하세요",
     hint_no_model: "다운로드된 모델 없음 — 클릭하여 모델 관리자 열기",
+    untitled: "제목 없음",
+    dismiss: "닫기",
   },
 };
 

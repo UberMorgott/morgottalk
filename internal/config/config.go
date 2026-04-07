@@ -37,22 +37,6 @@ type AppConfig struct {
 	Presets        []Preset `json:"presets"`
 }
 
-// DefaultPreset returns a sensible default preset.
-func DefaultPreset() Preset {
-	return Preset{
-		ID:              uuid.New().String(),
-		Name:            "Default",
-		ModelName:       "base-q5_1",
-		KeepModelLoaded: false,
-		InputMode:       "hold",
-		Hotkey:          "",
-		Language:        "auto",
-		UseKBLayout:     false,
-		KeepHistory:     true,
-		Enabled:         false,
-	}
-}
-
 // DefaultAppConfig returns defaults with no presets (onboarding will guide the user).
 func DefaultAppConfig() *AppConfig {
 	return &AppConfig{

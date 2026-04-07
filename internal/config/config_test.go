@@ -46,6 +46,147 @@ func TestDefaultPreset(t *testing.T) {
 	}
 }
 
+func TestMigrateOldConfigAudit(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       oldConfig
+		checkPreset func(t *testing.T, cfg *AppConfig)
+	}{
+		{
+			name: "full old config",
+			input: oldConfig{
+				ModelName:    "small",
+				ModelsDir:    "/path/to/models",
+				Language:     "ru",
+				HotkeyMod:   "ctrl",
+				HotkeyKey:   "f1",
+				MicrophoneID: "mic-123",
+				AutoStart:    true,
+				RecordMode:   "toggle",
+			},
+			checkPreset: func(t *testing.T, cfg *AppConfig) {
+				if cfg.MicrophoneID != "mic-123" {
+					t.Errorf("MicrophoneID = %q, want %q", cfg.MicrophoneID, "mic-123")
+				}
+				if cfg.ModelsDir != "/path/to/models" {
+					t.Errorf("ModelsDir = %q, want %q", cfg.ModelsDir, "/path/to/models")
+				}
+				if len(cfg.Presets) != 1 {
+					t.Fatalf("len(Presets) = %d, want 1", len(cfg.Presets))
+				}
+				p := cfg.Presets[0]
+				if p.Name != "Default" {
+					t.Errorf("Name = %q, want %q", p.Name, "Default")
+				}
+				if p.ModelName != "small" {
+					t.Errorf("ModelName = %q, want %q", p.ModelName, "small")
+				}
+				if p.Hotkey != "ctrl+f1" {
+					t.Errorf("Hotkey = %q, want %q", p.Hotkey, "ctrl+f1")
+				}
+				if p.Language != "ru" {
+					t.Errorf("Language = %q, want %q", p.Language, "ru")
+				}
+				if p.InputMode != "toggle" {
+					t.Errorf("InputMode = %q, want %q", p.InputMode, "toggle")
+				}
+				if !p.Enabled {
+					t.Error("Enabled should be true when hotkey is set")
+				}
+				if p.ID == "" {
+					t.Error("ID should be generated")
+				}
+				if p.KeepModelLoaded {
+					t.Error("KeepModelLoaded should be false after migration")
+				}
+				if p.UseKBLayout {
+					t.Error("UseKBLayout should be false after migration")
+				}
+				if !p.KeepHistory {
+					t.Error("KeepHistory should be true after migration")
+				}
+			},
+		},
+		{
+			name:  "minimal old config — defaults",
+			input: oldConfig{},
+			checkPreset: func(t *testing.T, cfg *AppConfig) {
+				if len(cfg.Presets) != 1 {
+					t.Fatalf("len(Presets) = %d, want 1", len(cfg.Presets))
+				}
+				p := cfg.Presets[0]
+				if p.ModelName != "base-q5_1" {
+					t.Errorf("ModelName = %q, want %q (default)", p.ModelName, "base-q5_1")
+				}
+				if p.Language != "auto" {
+					t.Errorf("Language = %q, want %q", p.Language, "auto")
+				}
+				if p.InputMode != "hold" {
+					t.Errorf("InputMode = %q, want %q", p.InputMode, "hold")
+				}
+				if p.Hotkey != "" {
+					t.Errorf("Hotkey = %q, want empty", p.Hotkey)
+				}
+				if p.Enabled {
+					t.Error("Enabled should be false when no hotkey")
+				}
+			},
+		},
+		{
+			name: "hotkey key only (no mod)",
+			input: oldConfig{
+				HotkeyKey: "f5",
+			},
+			checkPreset: func(t *testing.T, cfg *AppConfig) {
+				p := cfg.Presets[0]
+				if p.Hotkey != "f5" {
+					t.Errorf("Hotkey = %q, want %q", p.Hotkey, "f5")
+				}
+				if !p.Enabled {
+					t.Error("Enabled should be true when hotkey is set")
+				}
+			},
+		},
+		{
+			name: "hotkey mod only (no key) — empty hotkey",
+			input: oldConfig{
+				HotkeyMod: "ctrl",
+			},
+			checkPreset: func(t *testing.T, cfg *AppConfig) {
+				p := cfg.Presets[0]
+				if p.Hotkey != "" {
+					t.Errorf("Hotkey = %q, want empty (mod without key)", p.Hotkey)
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.input)
+			if err != nil {
+				t.Fatalf("json.Marshal failed: %v", err)
+			}
+
+			cfg := migrateOldConfig(data)
+
+			if cfg == nil {
+				t.Fatal("migrateOldConfig returned nil")
+			}
+			if tt.checkPreset != nil {
+				tt.checkPreset(t, cfg)
+			}
+		})
+	}
+}
+
+func TestMigrateOldConfigInvalidJSON(t *testing.T) {
+	cfg := migrateOldConfig([]byte("not valid json"))
+	if cfg != nil {
+		t.Errorf("expected nil for invalid JSON, got %+v", cfg)
+	}
+}
+
 func TestDefaultAppConfig(t *testing.T) {
 	cfg := DefaultAppConfig()
 

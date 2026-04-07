@@ -2,7 +2,7 @@
   import { createEventDispatcher, onMount, onDestroy } from 'svelte';
   import { t } from '../lib/i18n';
   import type { Lang } from '../lib/i18n';
-  import { Events } from '@wailsio/runtime';
+  import { Events, Browser } from '@wailsio/runtime';
   import { PickModelsDir, SaveGlobalSettings, InstallBackend, GetAllBackends, RestartApp } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
 
   export let microphoneId: string = '';
@@ -218,7 +218,7 @@
         <!-- svelte-ignore a11y-label-has-associated-control -->
         <label class="field-label">{t(displayLang, 'backend')}</label>
         <div class="backend-group">
-          {#each visibleBackends as b}
+          {#each visibleBackends as b (b.id)}
             <button
               class="backend-pill"
               class:backend-active={(localBackend === b.id || (localBackend === 'auto' && b.id === 'auto')) && (b.compiled && b.systemAvailable)}
@@ -283,7 +283,7 @@
         <!-- CUDA driver hint — clickable link to NVIDIA driver page -->
         {#if visibleBackends.some(b => b.installHint === 'cuda_driver_525' && !b.compiled)}
           <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-          <div class="backend-driver-link" on:click={() => window.open('https://www.nvidia.com/download/index.aspx')}>
+          <div class="backend-driver-link" on:click={() => Browser.OpenURL('https://www.nvidia.com/download/index.aspx')}>
             <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
               <path d="M6 1v4.5m0 0L3.5 3M6 5.5L8.5 3M1 8l1.5 2h7L11 8" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
             </svg>
@@ -330,7 +330,7 @@
       <div class="field" title={t(displayLang, 'tip_uiLanguage')}>
         <label class="field-label" for="settings-ui-lang">{t(displayLang, 'uiLanguage')}</label>
         <select id="settings-ui-lang" class="field-select" bind:value={localLang}>
-          {#each langOptions as opt}
+          {#each langOptions as opt (opt.code)}
             <option value={opt.code}>{opt.label}</option>
           {/each}
         </select>
@@ -395,7 +395,7 @@
         <label class="field-label" for="settings-mic">{t(displayLang, 'microphone')}</label>
         <select id="settings-mic" class="field-select" bind:value={localMicId}>
           <option value="">{t(displayLang, 'default_mic')}</option>
-          {#each microphones as mic}
+          {#each microphones as mic (mic.id)}
             <option value={mic.id}>{mic.name}{mic.isDefault ? ' *' : ''}</option>
           {/each}
         </select>

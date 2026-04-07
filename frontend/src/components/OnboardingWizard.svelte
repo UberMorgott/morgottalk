@@ -178,7 +178,7 @@
         useKBLayout: false,
         enabled: presetHotkey !== '',
       });
-    } catch {}
+    } catch (e) { console.error('create preset failed:', e); }
     await saveSettings(true);
     dispatch('done', { uiLang, theme, backend, microphoneId });
   }
@@ -299,7 +299,7 @@
           <!-- svelte-ignore a11y-label-has-associated-control -->
           <label class="field-label">{t(uiLang, 'uiLanguage')}</label>
           <div class="lang-grid">
-            {#each LANGS as l}
+            {#each LANGS as l (l.code)}
               <button class="lang-pill" class:active={uiLang === l.code} on:click={() => uiLang = l.code}>
                 {l.label}
               </button>
@@ -329,7 +329,7 @@
           <label for="mic-select" class="field-label">{t(uiLang, 'microphone')}</label>
           <select id="mic-select" class="select" bind:value={microphoneId}>
             <option value="">{t(uiLang, 'default_mic')}</option>
-            {#each microphones as mic}
+            {#each microphones as mic (mic.id)}
               <option value={mic.id}>{mic.name}{mic.isDefault ? ' ★' : ''}</option>
             {/each}
           </select>
@@ -343,7 +343,7 @@
         <div class="acc-list">
 
           <!-- GPU backends (only visible if hardware exists, current OS only) -->
-          {#each visibleGpuBackends as b}
+          {#each visibleGpuBackends as b (b.id)}
             {@const state = getState(b.id)}
             {@const isReady = (b.compiled && b.systemAvailable) || state.status === 'done'}
             {@const needsDL = b.systemAvailable && !b.compiled && state.status === 'idle'}

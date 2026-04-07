@@ -13,7 +13,7 @@
   }
 
   onMount(() => {
-    Events.On('overlay:state', (event: any) => {
+    const unsubState = Events.On('overlay:state', (event: any) => {
       const data = event.data?.[0] || event.data || event;
       if (data.state) {
         state = data.state;
@@ -23,12 +23,17 @@
       }
     });
 
-    Events.On('transcription:progress', (event: any) => {
+    const unsubProgress = Events.On('transcription:progress', (event: any) => {
       const data = event.data?.[0] || event.data || event;
       if (data.current && data.total) {
         progress = { current: data.current, total: data.total };
       }
     });
+
+    return () => {
+      unsubState();
+      unsubProgress();
+    };
   });
 </script>
 

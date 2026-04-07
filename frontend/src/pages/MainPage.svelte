@@ -128,10 +128,10 @@
             }
           }
           states = newStates;
-        } catch {}
+        } catch (e) { console.error('polling recording states failed:', e); }
       }, 500);
 
-      Events.On('transcription:progress', (event: any) => {
+      const unsubTranscription = Events.On('transcription:progress', (event: any) => {
         const data = event.data?.[0] || event.data || event;
         if (data.presetId && data.total > 1) {
           transcriptionProgress[data.presetId] = `${data.current}/${data.total}`;
@@ -139,7 +139,7 @@
         }
       });
 
-      Events.On('model:download:progress', (event: any) => {
+      const unsubModelProgress = Events.On('model:download:progress', (event: any) => {
         const data = event.data?.[0] || event.data || event;
         if (data.modelName) {
           if (data.done) {
@@ -159,6 +159,8 @@
     })();
 
     return () => {
+      unsubTranscription();
+      unsubModelProgress();
       clearInterval(stateInterval);
       if (sortable) sortable.destroy();
     };
@@ -192,15 +194,15 @@
       microphones = mics || [];
       models = mdls || [];
       if (!modelsDir) modelsDir = dir || '';
-    } catch {}
+    } catch (e) { console.error('refresh all failed:', e); }
   }
 
   async function refreshModels() {
-    try { models = await GetAvailableModels() || []; } catch {}
+    try { models = await GetAvailableModels() || []; } catch (e) { console.error('refresh models failed:', e); }
   }
 
   async function refreshPresets() {
-    try { presets = await GetPresets() || []; } catch {}
+    try { presets = await GetPresets() || []; } catch (e) { console.error('refresh presets failed:', e); }
   }
 
   // --- Preset CRUD ---
@@ -208,7 +210,7 @@
     try {
       await SetPresetEnabled(e.detail.id, e.detail.enabled);
       await refreshPresets();
-    } catch {}
+    } catch (e) { console.error('preset toggle failed:', e); }
   }
 
   // Expand/collapse card
@@ -254,14 +256,14 @@
           presets = presets;
         }
       }
-    } catch {}
+    } catch (e) { console.error('preset save failed:', e); }
   }
 
   async function handleDeletePreset(e: CustomEvent<string>) {
     try {
       await DeletePreset(e.detail);
       await refreshPresets();
-    } catch {}
+    } catch (e) { console.error('preset delete failed:', e); }
     creatingPreset = false;
     expandedPresetId = null;
   }
@@ -406,6 +408,7 @@
         type={diagnosticType}
         message={diagnosticMessage}
         dismissible={true}
+        lang={uiLang}
         on:dismiss={() => diagnosticMessage = ''}
       />
     </div>
