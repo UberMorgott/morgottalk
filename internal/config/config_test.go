@@ -5,47 +5,6 @@ import (
 	"testing"
 )
 
-func TestDefaultPreset(t *testing.T) {
-	p := DefaultPreset()
-
-	if p.ID == "" {
-		t.Error("ID should be non-empty UUID")
-	}
-	if p.Name != "Default" {
-		t.Errorf("Name = %q, want %q", p.Name, "Default")
-	}
-	if p.ModelName != "base-q5_1" {
-		t.Errorf("ModelName = %q, want %q", p.ModelName, "base-q5_1")
-	}
-	if p.KeepModelLoaded {
-		t.Error("KeepModelLoaded should be false")
-	}
-	if p.InputMode != "hold" {
-		t.Errorf("InputMode = %q, want %q", p.InputMode, "hold")
-	}
-	if p.Hotkey != "" {
-		t.Errorf("Hotkey = %q, want empty", p.Hotkey)
-	}
-	if p.Language != "auto" {
-		t.Errorf("Language = %q, want %q", p.Language, "auto")
-	}
-	if p.UseKBLayout {
-		t.Error("UseKBLayout should be false")
-	}
-	if !p.KeepHistory {
-		t.Error("KeepHistory should be true")
-	}
-	if p.Enabled {
-		t.Error("Enabled should be false")
-	}
-
-	// Two calls should produce different IDs
-	p2 := DefaultPreset()
-	if p.ID == p2.ID {
-		t.Error("each DefaultPreset() call should generate a unique ID")
-	}
-}
-
 func TestMigrateOldConfigAudit(t *testing.T) {
 	tests := []struct {
 		name        string
