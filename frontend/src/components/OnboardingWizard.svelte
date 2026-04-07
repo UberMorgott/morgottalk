@@ -453,13 +453,11 @@
               <div class="acc-card" class:selected={backend === b.id} class:downloading>
                 <div class="acc-card-header"
                   on:click={() => {
-                    if (isReady || done) { backend = b.id; infoOpenId = null; }
-                    else if ((needsDL || needsInstall) && !downloading) { openInfo(b.id); }
+                    if (isReady || done) { backend = b.id; }
                   }}
                   role="button" tabindex="0"
                   on:keydown={(e) => { if (e.key === 'Enter') {
-                    if (isReady || done) { backend = b.id; infoOpenId = null; }
-                    else if (needsDL || needsInstall) { openInfo(b.id); }
+                    if (isReady || done) { backend = b.id; }
                   }}}>
                   <div class="acc-icon">{@html backendIcon(b.id)}</div>
                   <div class="acc-info">
@@ -479,20 +477,8 @@
                       {gpuStatusText(b)}
                     </div>
                   </div>
-                  {#if downloading}
-                    <div class="acc-right-icon">
-                      <svg class="spin-anim" viewBox="0 0 20 20" fill="none">
-                        <circle cx="10" cy="10" r="7.5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-dasharray="14 33"/>
-                      </svg>
-                    </div>
-                  {:else if isReady || done}
+                  {#if isReady || done}
                     <div class="acc-select-dot" class:dot-active={backend === b.id}></div>
-                  {:else if needsDL || needsInstall}
-                    <button class="acc-dl-icon"
-                      title={needsDL ? t(uiLang, 'onboarding_download_btn') : t(uiLang, 'onboarding_install_btn')}
-                      on:click|stopPropagation={() => startInstall(b.id)}>
-                      {@html iconSvg.download}
-                    </button>
                   {/if}
                 </div>
 
@@ -510,6 +496,19 @@
                         <span class="cuda-stage-size">~{b.downloadSizeMB}{t(uiLang, 'mb')}</span>
                       {/if}
                     </div>
+                  </div>
+                {/if}
+
+                <!-- Direct download/install button -->
+                {#if (needsDL || needsInstall) && !downloading && !done && !hasError}
+                  <div class="acc-action-row">
+                    <button class="btn-install" on:click|stopPropagation={() => startInstall(b.id)}>
+                      {@html iconSvg.download}
+                      <span>{needsInstall ? t(uiLang, 'onboarding_install_btn') : t(uiLang, 'onboarding_download_btn')}</span>
+                      {#if b.downloadSizeMB > 0}
+                        <span class="btn-size">~{b.downloadSizeMB} {t(uiLang, 'mb')}</span>
+                      {/if}
+                    </button>
                   </div>
                 {/if}
 
@@ -537,24 +536,6 @@
                   </div>
                 {/if}
 
-                <!-- Info panel -->
-                {#if showInfo}
-                  <div class="info-panel">
-                    <p class="info-text">
-                      {needsInstall
-                        ? t(uiLang, 'onboarding_gpu_install_runtime')
-                        : t(uiLang, 'onboarding_gpu_download').replace('{size}', String(b.downloadSizeMB || '?'))}
-                    </p>
-                    <div class="info-btns">
-                      <button class="btn-cancel" on:click={() => infoOpenId = null}>
-                        {t(uiLang, 'onboarding_cancel')}
-                      </button>
-                      <button class="btn-ok" on:click={() => startInstall(b.id)}>
-                        {needsInstall ? t(uiLang, 'onboarding_install_btn') : t(uiLang, 'onboarding_download_btn')}
-                      </button>
-                    </div>
-                  </div>
-                {/if}
 
                 <!-- Error -->
                 {#if hasError}
@@ -884,25 +865,6 @@
   }
   .dot-active { border-color: var(--accent); background: var(--accent); }
 
-  .acc-dl-icon {
-    background: transparent; border: none;
-    color: var(--accent);
-    width: 28px; height: 28px;
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer; flex-shrink: 0;
-    border-radius: 6px; padding: 0;
-    transition: opacity .14s, background .12s;
-  }
-  .acc-dl-icon:hover { opacity: .7; background: var(--accent-dim); }
-  .acc-dl-icon :global(svg) { width: 20px; height: 20px; display: block; }
-
-  .acc-right-icon {
-    width: 20px; height: 20px; flex-shrink: 0;
-    margin-top: 2px; color: var(--accent);
-    display: flex; align-items: center; justify-content: center;
-  }
-  .acc-right-icon :global(svg) { width: 20px; height: 20px; display: block; }
-  .spin-anim { animation: spin 0.9s linear infinite; }
 
   .dl-progress { padding: 0 14px 12px; }
   .dl-step-label { font-size: 10px; font-weight: 600; color: var(--accent); margin-bottom: 4px; font-family: ui-monospace, monospace; }
@@ -920,27 +882,20 @@
   .cuda-stage-icon.stage-ok { color: #22c55e; }
   .cuda-stage-size { opacity: 0.6; font-size: 9px; }
 
-  .info-panel {
-    padding: 10px 14px 12px;
-    border-top: 1px solid var(--border-subtle, rgba(255,255,255,.06));
-    background: var(--bg-input, rgba(255,255,255,.03));
-    display: flex; flex-direction: column; gap: 8px;
+  .acc-action-row {
+    padding: 6px 14px 10px;
+    display: flex; align-items: center;
   }
-  .info-text { font-size: 12px; color: var(--text-secondary); margin: 0; line-height: 1.5; }
-  .info-btns { display: flex; gap: 8px; }
-  .btn-cancel {
-    flex: 1; padding: 7px; border-radius: 7px;
-    border: 1px solid var(--border-color); background: transparent;
-    color: var(--text-secondary); font-size: 13px; cursor: pointer; transition: all .14s;
+  .btn-install {
+    display: flex; align-items: center; gap: 6px;
+    padding: 7px 16px; border-radius: 7px;
+    border: 1px solid var(--accent); background: var(--accent);
+    color: #fff; font-size: 13px; font-weight: 500;
+    cursor: pointer; transition: all .14s;
   }
-  .btn-cancel:hover { border-color: var(--border-hover); }
-  .btn-ok {
-    flex: 1; padding: 7px; border-radius: 7px;
-    background: var(--accent); border: none;
-    color: #fff; font-size: 13px; font-weight: 600;
-    cursor: pointer; transition: opacity .14s;
-  }
-  .btn-ok:hover { opacity: .85; }
+  .btn-install:hover { opacity: .85; }
+  .btn-install :global(svg) { width: 14px; height: 14px; }
+  .btn-size { font-size: 11px; opacity: .7; }
 
   .error-row {
     display: flex; align-items: center; gap: 8px;
