@@ -130,13 +130,10 @@ func cudaBackend(det gpuDetection) BackendInfo {
 	}
 
 	// Runtime is present on the system.
-	if hasDLL {
-		info.SystemAvailable = true
-	} else {
-		info.SystemAvailable = true
+	info.SystemAvailable = true
+	if !hasDLL {
 		info.UnavailableReason = "not_compiled"
 		info.CanInstall = true
-		info.InstallHint = "cuda_driver_525"
 	}
 
 	return info
