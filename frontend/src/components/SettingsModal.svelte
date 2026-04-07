@@ -14,7 +14,7 @@
   export let autoStart: boolean = false;
   export let startMinimized: boolean = false;
   export let backend: string = 'auto';
-  export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number }[] = [];
+  export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number; runtimeInstalled: boolean }[] = [];
   export let onboardingDone: boolean = true;
 
   const dispatch = createEventDispatcher<{
@@ -293,10 +293,44 @@
             </svg>
           </div>
         {/if}
+        <!-- 2-stage component status for CUDA -->
+        {#if installingBackend === 'cuda' || (visibleBackends.find(b => b.id === 'cuda' && (b.canInstall || b.unavailableReason === 'not_compiled') && !(b.compiled && b.systemAvailable)))}
+          {@const cudaB = visibleBackends.find(b => b.id === 'cuda')}
+          {#if cudaB && !(cudaB.compiled && cudaB.systemAvailable)}
+            <div class="backend-stages">
+              <div class="backend-stage-item">
+                <span class="stage-icon">{cudaB.runtimeInstalled ? '✓' : '✗'}</span>
+                <span class="stage-text">{t(displayLang, cudaB.runtimeInstalled ? 'cuda_runtime_installed' : 'cuda_runtime_missing')}</span>
+              </div>
+              <div class="backend-stage-item">
+                <span class="stage-icon">{cudaB.compiled ? '✓' : '✗'}</span>
+                <span class="stage-text">{t(displayLang, cudaB.compiled ? 'cuda_dll_ready' : 'cuda_dll_missing')}</span>
+                {#if !cudaB.compiled && cudaB.downloadSizeMB > 0}
+                  <span class="stage-size">~{cudaB.downloadSizeMB}{t(displayLang, 'mb')}</span>
+                {/if}
+              </div>
+            </div>
+          {/if}
+        {/if}
         <!-- Download progress / messages -->
-        {#if (installStage === 'downloading' || installStage === 'downloading_runtime') && installProgress !== null}
-          <div class="backend-message">{t(displayLang, installStage === 'downloading_runtime' ? 'backendDownloadingRuntime' : 'backendDownloading')} {Math.round(installProgress)}%</div>
-        {:else if installStage === 'installing' || installStage === 'installing_runtime'}
+        {#if (installStage === 'downloading_runtime') && installProgress !== null}
+          <div class="backend-message">
+            <span class="stage-step">{t(displayLang, 'cuda_step_1')}</span> {t(displayLang, 'backendDownloadingRuntime')} {Math.round(installProgress)}%
+          </div>
+          <div class="backend-uac-hint">{t(displayLang, 'cuda_uac_warning')}</div>
+        {:else if installStage === 'installing_runtime'}
+          <div class="backend-message">
+            <span class="stage-step">{t(displayLang, 'cuda_step_1')}</span> {installStageText || t(displayLang, 'backendInstalling')}
+          </div>
+          <div class="backend-uac-hint">{t(displayLang, 'cuda_uac_warning')}</div>
+        {:else if installStage === 'downloading' && installProgress !== null}
+          <div class="backend-message">
+            {#if installingBackend === 'cuda'}
+              <span class="stage-step">{t(displayLang, 'cuda_step_2')}</span>
+            {/if}
+            {t(displayLang, 'backendDownloading')} {Math.round(installProgress)}%
+          </div>
+        {:else if installStage === 'installing'}
           <div class="backend-message">{installStageText || t(displayLang, 'backendInstalling')}</div>
         {:else if backendMessage}
           <div class="backend-message">
@@ -749,6 +783,49 @@
   }
   .field-row > .field {
     flex: 1;
+  }
+
+  /* 2-stage install status */
+  .backend-stages {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 4px 0 0;
+  }
+  .backend-stage-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    font-family: ui-monospace, monospace;
+    color: var(--text-muted);
+  }
+  .stage-icon {
+    font-size: 11px;
+    width: 14px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .stage-text {
+    color: var(--text-tertiary);
+  }
+  .stage-size {
+    opacity: 0.6;
+    font-size: 9px;
+  }
+  .stage-step {
+    font-weight: 600;
+    color: var(--accent);
+    margin-right: 4px;
+  }
+  .backend-uac-hint {
+    font-size: 10px;
+    color: #f59e0b;
+    font-family: ui-monospace, monospace;
+    padding: 1px 0 0;
+    display: flex;
+    align-items: center;
+    gap: 4px;
   }
 
   .models-btn {

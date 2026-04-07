@@ -19,6 +19,7 @@ type BackendInfo struct {
 	GPUDetected       string `json:"gpuDetected"`       // e.g. "NVIDIA RTX 5070 Ti", ""
 	Recommended       bool   `json:"recommended"`       // best backend for detected hardware
 	DownloadSizeMB    int    `json:"downloadSizeMB"`    // approximate DLL download size, 0 = unknown
+	RuntimeInstalled  bool   `json:"runtimeInstalled"`  // true if system runtime (CUDA/Vulkan) is present
 }
 
 // gpuDetection holds the results of platform-specific GPU/runtime detection.
@@ -130,6 +131,7 @@ func cudaBackend(det gpuDetection) BackendInfo {
 	}
 
 	// Runtime is present on the system.
+	info.RuntimeInstalled = true
 	info.SystemAvailable = true
 	if !hasDLL {
 		info.UnavailableReason = "not_compiled"
@@ -154,6 +156,7 @@ func vulkanBackend(det gpuDetection) BackendInfo {
 	}
 
 	// Runtime is present on the system.
+	info.RuntimeInstalled = true
 	if hasDLL {
 		info.SystemAvailable = true
 	} else {

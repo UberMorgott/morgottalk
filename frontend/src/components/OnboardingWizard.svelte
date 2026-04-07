@@ -7,7 +7,7 @@
   import type { Lang } from '../lib/i18n';
 
   export let microphones: { id: string; name: string; isDefault: boolean }[] = [];
-  export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number }[] = [];
+  export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number; runtimeInstalled: boolean }[] = [];
   export let models: { name: string; fileName: string; size: string; sizeBytes: number; downloaded: boolean }[] = [];
   export let settings: { microphoneId: string; modelsDir: string; theme: string; uiLang: string; closeAction: string; autoStart: boolean; startMinimized: boolean; backend: string; onboardingDone: boolean };
 
@@ -34,8 +34,10 @@
 
   // Backend install state
   type InstallStatus = 'idle' | 'downloading' | 'done' | 'error';
+  type InstallStage = '' | 'downloading_runtime' | 'installing_runtime' | 'downloading' | 'installing';
   type InstallState = {
     status: InstallStatus;
+    stage: InstallStage;
     stageText: string;
     percent: number;
     error: string;
@@ -92,17 +94,20 @@
 
       if (data.done) {
         if (data.error) {
-          installStates[id] = { status: 'error', stageText: '', percent: 0, error: data.error };
+          installStates[id] = { status: 'error', stage: '', stageText: '', percent: 0, error: data.error };
         } else {
-          installStates[id] = { status: 'done', stageText: '', percent: 100, error: '' };
+          installStates[id] = { status: 'done', stage: '', stageText: '', percent: 100, error: '' };
           backend = id;
         }
       } else {
-        const stageText = data.stageText || (data.stage === 'downloading_runtime'
+        const rawStage: InstallStage = data.stage || 'downloading';
+        const isRuntimeStage = rawStage === 'downloading_runtime' || rawStage === 'installing_runtime';
+        const stageText = data.stageText || (isRuntimeStage
           ? t(uiLang, 'onboarding_installing_runtime')
           : t(uiLang, 'onboarding_downloading'));
         installStates[id] = {
           status: 'downloading',
+          stage: rawStage,
           stageText,
           percent: data.percent || 0,
           error: '',
@@ -205,7 +210,7 @@
 
   // --- Backend install flow ---
   function getState(id: string): InstallState {
-    return installStates[id] || { status: 'idle', stageText: '', percent: 0, error: '' };
+    return installStates[id] || { status: 'idle', stage: '', stageText: '', percent: 0, error: '' };
   }
 
   function openInfo(id: string) {
@@ -214,12 +219,12 @@
 
   async function startInstall(id: string) {
     infoOpenId = null;
-    installStates[id] = { status: 'downloading', stageText: t(uiLang, 'onboarding_downloading'), percent: 0, error: '' };
+    installStates[id] = { status: 'downloading', stage: 'downloading', stageText: t(uiLang, 'onboarding_downloading'), percent: 0, error: '' };
     installStates = installStates;
     try {
       await InstallBackend(id);
     } catch (e: any) {
-      installStates[id] = { status: 'error', stageText: '', percent: 0, error: String(e) };
+      installStates[id] = { status: 'error', stage: '', stageText: '', percent: 0, error: String(e) };
       installStates = installStates;
     }
   }
@@ -491,16 +496,44 @@
                   {/if}
                 </div>
 
+                <!-- 2-stage component status for CUDA -->
+                {#if b.id === 'cuda' && !isReady && !done && !downloading}
+                  <div class="cuda-stages">
+                    <div class="cuda-stage-item">
+                      <span class="cuda-stage-icon" class:stage-ok={b.runtimeInstalled}>{b.runtimeInstalled ? '✓' : '✗'}</span>
+                      <span>{t(uiLang, b.runtimeInstalled ? 'cuda_runtime_installed' : 'cuda_runtime_missing')}</span>
+                    </div>
+                    <div class="cuda-stage-item">
+                      <span class="cuda-stage-icon" class:stage-ok={b.compiled}>{b.compiled ? '✓' : '✗'}</span>
+                      <span>{t(uiLang, b.compiled ? 'cuda_dll_ready' : 'cuda_dll_missing')}</span>
+                      {#if !b.compiled && b.downloadSizeMB > 0}
+                        <span class="cuda-stage-size">~{b.downloadSizeMB}{t(uiLang, 'mb')}</span>
+                      {/if}
+                    </div>
+                  </div>
+                {/if}
+
                 <!-- Progress bar -->
                 {#if downloading}
                   <div class="dl-progress">
+                    {#if b.id === 'cuda'}
+                      <div class="dl-step-label">
+                        {t(uiLang, (state.stage === 'downloading_runtime' || state.stage === 'installing_runtime') ? 'cuda_step_1' : 'cuda_step_2')}
+                      </div>
+                    {/if}
                     <div class="dl-bar">
-                      <div class="dl-fill" style="width: {state.percent}%"></div>
+                      <div class="dl-fill" style="width: {(state.stage === 'installing_runtime') ? 100 : state.percent}%"
+                        class:dl-fill-pulse={state.stage === 'installing_runtime'}></div>
                     </div>
                     <div class="dl-meta">
                       <span>{state.stageText}</span>
-                      <span>{Math.round(state.percent)}%</span>
+                      {#if state.stage !== 'installing_runtime'}
+                        <span>{Math.round(state.percent)}%</span>
+                      {/if}
                     </div>
+                    {#if state.stage === 'downloading_runtime' || state.stage === 'installing_runtime'}
+                      <div class="dl-uac-hint">{t(uiLang, 'cuda_uac_warning')}</div>
+                    {/if}
                   </div>
                 {/if}
 
@@ -872,9 +905,20 @@
   .spin-anim { animation: spin 0.9s linear infinite; }
 
   .dl-progress { padding: 0 14px 12px; }
+  .dl-step-label { font-size: 10px; font-weight: 600; color: var(--accent); margin-bottom: 4px; font-family: ui-monospace, monospace; }
   .dl-bar { height: 4px; background: var(--border-subtle, rgba(255,255,255,.07)); border-radius: 2px; overflow: hidden; }
   .dl-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width .3s ease; }
+  .dl-fill-pulse { animation: dl-pulse 1.2s ease-in-out infinite; }
+  @keyframes dl-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
   .dl-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-tertiary); margin-top: 4px; }
+  .dl-uac-hint { font-size: 10px; color: #f59e0b; margin-top: 3px; font-family: ui-monospace, monospace; }
+
+  /* CUDA 2-stage component status */
+  .cuda-stages { padding: 6px 14px 8px; display: flex; flex-direction: column; gap: 3px; }
+  .cuda-stage-item { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--text-muted); font-family: ui-monospace, monospace; }
+  .cuda-stage-icon { width: 14px; text-align: center; flex-shrink: 0; font-size: 11px; }
+  .cuda-stage-icon.stage-ok { color: #22c55e; }
+  .cuda-stage-size { opacity: 0.6; font-size: 9px; }
 
   .info-panel {
     padding: 10px 14px 12px;
