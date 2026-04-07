@@ -6,12 +6,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
-
-	hook "github.com/robotn/gohook"
 )
 
-// HotkeyManager manages global hotkey registrations using gohook.
+// HotkeyManager manages global hotkey registrations using a platform keyboard hook.
 // Single event loop processes both hotkey matching and key capture.
 type HotkeyManager struct {
 	mu        sync.Mutex
@@ -33,7 +30,7 @@ type HotkeyManager struct {
 }
 
 type hotkeyBinding struct {
-	keys    []uint16 // sorted keycodes
+	keys    []uint16 // sorted VK codes
 	mode    string   // "hold" | "toggle"
 	pressed bool     // currently matched
 }
@@ -87,8 +84,8 @@ func (m *HotkeyManager) Stop() {
 	}
 	m.mu.Unlock()
 
-	// hook.End() may block on some platforms — don't hold mutex
-	go hook.End()
+	// stopHook posts WM_QUIT — non-blocking
+	stopHook()
 	log.Println("HotkeyManager: stopped")
 }
 
@@ -151,67 +148,76 @@ func (m *HotkeyManager) CancelCapture() {
 	}
 }
 
-// eventLoop is the main event processing goroutine.
+// keyEvent is sent from the hook callback to the processing goroutine.
+type keyEvent struct {
+	vk   uint16
+	down bool
+}
+
+// eventLoop runs the keyboard hook and processes key events.
 func (m *HotkeyManager) eventLoop() {
-	evChan := hook.Start()
+	keyCh := make(chan keyEvent, 256)
 	pressedKeys := make(map[uint16]bool)
-	hookConfirmed := false
-	timer := time.NewTimer(5 * time.Second)
-	defer timer.Stop()
 
-	log.Println("HotkeyManager: event loop started, waiting for hook confirmation...")
-
-	for {
+	// onKey is called from the hook thread — must return fast.
+	// Sends to a buffered channel (non-blocking) to avoid holding up the hook.
+	onKey := func(vk uint16, down bool) {
 		select {
-		case <-m.stop:
-			return
-		case <-timer.C:
-			if !hookConfirmed {
-				log.Println("ERROR: HotkeyManager: keyboard hook failed to install (no HookEnabled event within 5s)")
-				m.mu.Lock()
-				cb := m.onHookStatus
-				m.mu.Unlock()
-				if cb != nil {
-					cb(false, "keyboard hook failed to install")
-				}
-			}
-		case ev, ok := <-evChan:
-			if !ok {
-				log.Println("HotkeyManager: event channel closed")
-				return
-			}
-			if ev.Kind == hook.HookEnabled {
-				hookConfirmed = true
-				timer.Stop()
-				log.Println("HotkeyManager: keyboard hook installed successfully")
-				m.mu.Lock()
-				cb := m.onHookStatus
-				m.mu.Unlock()
-				if cb != nil {
-					cb(true, "")
-				}
-				continue
-			}
-			switch ev.Kind {
-			case hook.KeyDown:
-				kc := ev.Keycode
-				pressedKeys[kc] = true
-				m.handleKeyDown(kc, pressedKeys)
+		case keyCh <- keyEvent{vk, down}:
+		default:
+			// Channel full — drop event (shouldn't happen with 256 buffer)
+		}
+	}
 
-			case hook.KeyUp:
-				kc := ev.Keycode
-				delete(pressedKeys, kc)
-				m.handleKeyUp(kc, pressedKeys)
+	onInstalled := func(err error) {
+		if err != nil {
+			log.Printf("ERROR: keyboard hook failed: %v", err)
+			m.mu.Lock()
+			cb := m.onHookStatus
+			m.mu.Unlock()
+			if cb != nil {
+				cb(false, err.Error())
+			}
+		} else {
+			log.Println("HotkeyManager: keyboard hook installed successfully")
+			m.mu.Lock()
+			cb := m.onHookStatus
+			m.mu.Unlock()
+			if cb != nil {
+				cb(true, "")
 			}
 		}
 	}
+
+	// Process key events on a separate goroutine
+	go func() {
+		for {
+			select {
+			case <-m.stop:
+				return
+			case ev := <-keyCh:
+				if ev.down {
+					pressedKeys[ev.vk] = true
+					m.handleKeyDown(ev.vk, pressedKeys)
+				} else {
+					delete(pressedKeys, ev.vk)
+					m.handleKeyUp(ev.vk, pressedKeys)
+				}
+			}
+		}
+	}()
+
+	// startHook blocks in the message pump until stopHook() is called
+	if err := startHook(onKey, onInstalled); err != nil {
+		// Already reported via onInstalled callback
+		log.Printf("HotkeyManager: startHook returned: %v", err)
+	}
+	log.Println("HotkeyManager: event loop ended")
 }
 
 func (m *HotkeyManager) handleKeyDown(kc uint16, pressedKeys map[uint16]bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	log.Printf("HotkeyManager: keyDown kc=%d bindings=%d", kc, len(m.active))
 
 	if m.capturing {
 		m.captureKeyDown(kc, pressedKeys)
@@ -250,7 +256,7 @@ func (m *HotkeyManager) handleKeyUp(kc uint16, pressedKeys map[uint16]bool) {
 // captureKeyDown handles key presses during capture mode.
 func (m *HotkeyManager) captureKeyDown(kc uint16, pressedKeys map[uint16]bool) {
 	// Escape cancels capture
-	if kc == kcEscape {
+	if kc == vkEscape {
 		m.capturing = false
 		m.captureKeys = nil
 		m.captureCh <- ""
@@ -269,7 +275,7 @@ func (m *HotkeyManager) captureKeyDown(kc uint16, pressedKeys map[uint16]bool) {
 	// Non-modifier pressed → finalize with all currently held keys
 	keys := make([]uint16, 0, len(pressedKeys))
 	for pk := range pressedKeys {
-		if pk != kcEscape {
+		if pk != vkEscape {
 			keys = append(keys, pk)
 		}
 	}
@@ -319,105 +325,112 @@ func matchBinding(bindingKeys []uint16, pressedKeys map[uint16]bool) bool {
 	return true
 }
 
-// --- Keycode maps ---
+// --- VK code constants and maps ---
 
-const kcEscape = 1
+const vkEscape = 0x1B
 
-var modifierKeycodes = map[uint16]bool{
-	29:   true, // ctrl (left)
-	3613: true, // rctrl
-	42:   true, // shift (left)
-	54:   true, // rshift
-	56:   true, // alt (left)
-	3640: true, // ralt
-	3675: true, // super/cmd (left)
-	3676: true, // rsuper/rcmd
+// Windows Virtual Key codes for modifiers.
+var modifierVKCodes = map[uint16]bool{
+	0xA0: true, // VK_LSHIFT
+	0xA1: true, // VK_RSHIFT
+	0xA2: true, // VK_LCONTROL
+	0xA3: true, // VK_RCONTROL
+	0xA4: true, // VK_LMENU (left alt)
+	0xA5: true, // VK_RMENU (right alt)
+	0x5B: true, // VK_LWIN
+	0x5C: true, // VK_RWIN
 }
 
 func isModifier(kc uint16) bool {
-	return modifierKeycodes[kc]
+	return modifierVKCodes[kc]
 }
 
-// keycodeToName maps libuiohook virtual keycodes to display names.
-var keycodeToName = map[uint16]string{
-	// Modifiers
-	29:   "ctrl",
-	3613: "rctrl",
-	42:   "shift",
-	54:   "rshift",
-	56:   "alt",
-	3640: "ralt",
-	3675: "super",
-	3676: "rsuper",
-	// Letters
-	30: "a", 48: "b", 46: "c", 32: "d", 18: "e", 33: "f", 34: "g",
-	35: "h", 23: "i", 36: "j", 37: "k", 38: "l", 50: "m", 49: "n",
-	24: "o", 25: "p", 16: "q", 19: "r", 31: "s", 20: "t", 22: "u",
-	47: "v", 17: "w", 45: "x", 21: "y", 44: "z",
-	// Numbers
-	2: "1", 3: "2", 4: "3", 5: "4", 6: "5",
-	7: "6", 8: "7", 9: "8", 10: "9", 11: "0",
-	// Function keys
-	59: "f1", 60: "f2", 61: "f3", 62: "f4", 63: "f5", 64: "f6",
-	65: "f7", 66: "f8", 67: "f9", 68: "f10", 69: "f11", 70: "f12",
+// vkToName maps Windows Virtual Key codes to display names.
+var vkToName = map[uint16]string{
+	// Modifiers (left/right specific — the hook gives us these)
+	0xA2: "ctrl",
+	0xA3: "rctrl",
+	0xA0: "shift",
+	0xA1: "rshift",
+	0xA4: "alt",
+	0xA5: "ralt",
+	0x5B: "super",
+	0x5C: "rsuper",
+	// Letters (VK_A .. VK_Z = 0x41..0x5A)
+	0x41: "a", 0x42: "b", 0x43: "c", 0x44: "d", 0x45: "e", 0x46: "f", 0x47: "g",
+	0x48: "h", 0x49: "i", 0x4A: "j", 0x4B: "k", 0x4C: "l", 0x4D: "m", 0x4E: "n",
+	0x4F: "o", 0x50: "p", 0x51: "q", 0x52: "r", 0x53: "s", 0x54: "t", 0x55: "u",
+	0x56: "v", 0x57: "w", 0x58: "x", 0x59: "y", 0x5A: "z",
+	// Numbers (VK_0..VK_9 = 0x30..0x39)
+	0x31: "1", 0x32: "2", 0x33: "3", 0x34: "4", 0x35: "5",
+	0x36: "6", 0x37: "7", 0x38: "8", 0x39: "9", 0x30: "0",
+	// Function keys (VK_F1..VK_F12 = 0x70..0x7B)
+	0x70: "f1", 0x71: "f2", 0x72: "f3", 0x73: "f4", 0x74: "f5", 0x75: "f6",
+	0x76: "f7", 0x77: "f8", 0x78: "f9", 0x79: "f10", 0x7A: "f11", 0x7B: "f12",
 	// Special
-	1:  "esc",
-	14: "backspace",
-	15: "tab",
-	28: "enter",
-	57: "space",
+	0x1B: "esc",
+	0x08: "backspace",
+	0x09: "tab",
+	0x0D: "enter",
+	0x20: "space",
 	// Arrows
-	57416: "up",
-	57424: "down",
-	57419: "left",
-	57421: "right",
+	0x26: "up",
+	0x28: "down",
+	0x25: "left",
+	0x27: "right",
 	// Navigation
-	57415: "home",
-	57423: "end",
-	57417: "pageup",
-	57425: "pagedown",
-	57426: "insert",
-	57427: "delete",
+	0x24: "home",
+	0x23: "end",
+	0x21: "pageup",
+	0x22: "pagedown",
+	0x2D: "insert",
+	0x2E: "delete",
 	// Misc
-	58:   "capslock",
-	3639: "printscreen",
-	3653: "pause",
+	0x14: "capslock",
+	0x2C: "printscreen",
+	0x13: "pause",
 	// Numpad
-	71: "num7", 72: "num8", 73: "num9",
-	75: "num4", 76: "num5", 77: "num6",
-	79: "num1", 80: "num2", 81: "num3",
-	82: "num0",
-	74: "num-", 78: "num+", 55: "num*",
-	3637: "num/", 3612: "numenter",
-	// Symbols
-	12: "-", 13: "=",
-	26: "[", 27: "]", 43: "\\",
-	39: ";", 40: "'",
-	51: ",", 52: ".", 53: "/",
-	41: "`",
+	0x67: "num7", 0x68: "num8", 0x69: "num9",
+	0x64: "num4", 0x65: "num5", 0x66: "num6",
+	0x61: "num1", 0x62: "num2", 0x63: "num3",
+	0x60: "num0",
+	0x6D: "num-", 0x6B: "num+", 0x6A: "num*",
+	0x6F: "num/", 0x0E: "numenter", // Note: numpad enter sends VK_RETURN (0x0D) normally; this maps the extended key
+	// Symbols (OEM keys — US layout VK codes)
+	0xBD: "-",  // VK_OEM_MINUS
+	0xBB: "=",  // VK_OEM_PLUS (the = key)
+	0xDB: "[",  // VK_OEM_4
+	0xDD: "]",  // VK_OEM_6
+	0xDC: "\\", // VK_OEM_5
+	0xBA: ";",  // VK_OEM_1
+	0xDE: "'",  // VK_OEM_7
+	0xBC: ",",  // VK_OEM_COMMA
+	0xBE: ".",  // VK_OEM_PERIOD
+	0xBF: "/",  // VK_OEM_2
+	0xC0: "`",  // VK_OEM_3
 }
 
-// nameToKeycode is the reverse map, built at init.
-var nameToKeycode map[string]uint16
+// nameToVK is the reverse map, built at init.
+var nameToVK map[string]uint16
 
 func init() {
-	nameToKeycode = make(map[string]uint16, len(keycodeToName)+10)
-	for kc, name := range keycodeToName {
-		nameToKeycode[name] = kc
+	nameToVK = make(map[string]uint16, len(vkToName)+10)
+	for vk, name := range vkToName {
+		nameToVK[name] = vk
 	}
 	// Aliases for compatibility
-	nameToKeycode["escape"] = 1
-	nameToKeycode["return"] = 28
-	nameToKeycode["del"] = 57427
-	nameToKeycode["control"] = 29
-	nameToKeycode["cmd"] = 3675
-	nameToKeycode["command"] = 3675
-	nameToKeycode["meta"] = 3675
-	nameToKeycode["win"] = 3675
-	nameToKeycode["option"] = 56
+	nameToVK["escape"] = 0x1B
+	nameToVK["return"] = 0x0D
+	nameToVK["del"] = 0x2E
+	nameToVK["control"] = 0xA2
+	nameToVK["cmd"] = 0x5B
+	nameToVK["command"] = 0x5B
+	nameToVK["meta"] = 0x5B
+	nameToVK["win"] = 0x5B
+	nameToVK["option"] = 0xA4
 }
 
-// parseHotkeyStr parses "ctrl+shift+a" into sorted keycodes.
+// parseHotkeyStr parses "ctrl+shift+a" into sorted VK codes.
 func parseHotkeyStr(s string) ([]uint16, error) {
 	s = strings.TrimSpace(strings.ToLower(s))
 	if s == "" {
@@ -429,7 +442,7 @@ func parseHotkeyStr(s string) ([]uint16, error) {
 
 	for _, p := range parts {
 		p = strings.TrimSpace(p)
-		kc, ok := nameToKeycode[p]
+		kc, ok := nameToVK[p]
 		if !ok {
 			return nil, fmt.Errorf("unknown key: %q", p)
 		}
@@ -440,20 +453,31 @@ func parseHotkeyStr(s string) ([]uint16, error) {
 	return keys, nil
 }
 
-// keysToString converts keycodes to a display string like "ctrl+shift+a".
-// Modifiers are placed first, sorted; then regular keys, sorted.
+// modifierOrder defines display order: ctrl, shift, alt, super.
+var modifierOrder = map[uint16]int{
+	0xA2: 0, 0xA3: 1, // ctrl, rctrl
+	0xA0: 2, 0xA1: 3, // shift, rshift
+	0xA4: 4, 0xA5: 5, // alt, ralt
+	0x5B: 6, 0x5C: 7, // super, rsuper
+}
+
+// keysToString converts VK codes to a display string like "ctrl+shift+a".
+// Modifiers are placed first (in ctrl/shift/alt/super order); then regular keys, sorted.
 func keysToString(keys []uint16) string {
 	sort.Slice(keys, func(i, j int) bool {
 		mi, mj := isModifier(keys[i]), isModifier(keys[j])
 		if mi != mj {
 			return mi // modifiers first
 		}
+		if mi && mj {
+			return modifierOrder[keys[i]] < modifierOrder[keys[j]]
+		}
 		return keys[i] < keys[j]
 	})
 
 	parts := make([]string, 0, len(keys))
 	for _, kc := range keys {
-		if name, ok := keycodeToName[kc]; ok {
+		if name, ok := vkToName[kc]; ok {
 			parts = append(parts, name)
 		}
 	}

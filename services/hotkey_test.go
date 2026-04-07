@@ -71,13 +71,13 @@ func TestKeysToString(t *testing.T) {
 		keys []uint16
 		want string
 	}{
-		{"single key a", []uint16{30}, "a"},
-		{"ctrl+a", []uint16{29, 30}, "ctrl+a"},
-		{"reversed order", []uint16{30, 29}, "ctrl+a"}, // modifiers first
-		{"shift+ctrl+a", []uint16{42, 29, 30}, "ctrl+shift+a"},
-		{"f1", []uint16{59}, "f1"},
+		{"single key a", []uint16{0x41}, "a"},
+		{"ctrl+a", []uint16{0xA2, 0x41}, "ctrl+a"},
+		{"reversed order", []uint16{0x41, 0xA2}, "ctrl+a"}, // modifiers first
+		{"shift+ctrl+a", []uint16{0xA0, 0xA2, 0x41}, "ctrl+shift+a"},
+		{"f1", []uint16{0x70}, "f1"},
 		{"empty", []uint16{}, ""},
-		{"unknown keycode", []uint16{65535}, ""}, // unknown code skipped
+		{"unknown keycode", []uint16{0xFFFF}, ""}, // unknown code skipped
 	}
 
 	for _, tt := range tests {
@@ -135,8 +135,7 @@ func TestParseKeysRoundTrip(t *testing.T) {
 }
 
 func TestParseAliasRoundTrip(t *testing.T) {
-	// "escape" is an alias for keycode 1, whose canonical name is "esc".
-	// Parse alias → keysToString → parse canonical → same keycodes.
+	// "escape" is an alias for VK 0x1B, whose canonical name is "esc".
 	keys1, err := parseHotkeyStr("escape")
 	if err != nil {
 		t.Fatalf("parseHotkeyStr(%q) failed: %v", "escape", err)
@@ -166,38 +165,38 @@ func TestMatchBinding(t *testing.T) {
 	}{
 		{
 			"exact match single",
-			[]uint16{30}, // a
-			map[uint16]bool{30: true},
+			[]uint16{0x41}, // a
+			map[uint16]bool{0x41: true},
 			true,
 		},
 		{
 			"exact match combo",
-			[]uint16{29, 30}, // ctrl+a
-			map[uint16]bool{29: true, 30: true},
+			[]uint16{0xA2, 0x41}, // ctrl+a
+			map[uint16]bool{0xA2: true, 0x41: true},
 			true,
 		},
 		{
 			"superset pressed",
-			[]uint16{29, 30}, // ctrl+a
-			map[uint16]bool{29: true, 30: true, 42: true}, // ctrl+a+shift
+			[]uint16{0xA2, 0x41}, // ctrl+a
+			map[uint16]bool{0xA2: true, 0x41: true, 0xA0: true}, // ctrl+a+shift
 			true,
 		},
 		{
 			"missing key",
-			[]uint16{29, 30}, // ctrl+a
-			map[uint16]bool{29: true},
+			[]uint16{0xA2, 0x41}, // ctrl+a
+			map[uint16]bool{0xA2: true},
 			false,
 		},
 		{
 			"no keys pressed",
-			[]uint16{29, 30},
+			[]uint16{0xA2, 0x41},
 			map[uint16]bool{},
 			false,
 		},
 		{
 			"empty binding",
 			[]uint16{},
-			map[uint16]bool{30: true},
+			map[uint16]bool{0x41: true},
 			false,
 		},
 	}
@@ -218,17 +217,17 @@ func TestIsModifier(t *testing.T) {
 		kc   uint16
 		want bool
 	}{
-		{"left ctrl", 29, true},
-		{"right ctrl", 3613, true},
-		{"left shift", 42, true},
-		{"right shift", 54, true},
-		{"left alt", 56, true},
-		{"right alt", 3640, true},
-		{"left super", 3675, true},
-		{"right super", 3676, true},
-		{"a key", 30, false},
-		{"f1 key", 59, false},
-		{"space", 57, false},
+		{"left ctrl", 0xA2, true},
+		{"right ctrl", 0xA3, true},
+		{"left shift", 0xA0, true},
+		{"right shift", 0xA1, true},
+		{"left alt", 0xA4, true},
+		{"right alt", 0xA5, true},
+		{"left super", 0x5B, true},
+		{"right super", 0x5C, true},
+		{"a key", 0x41, false},
+		{"f1 key", 0x70, false},
+		{"space", 0x20, false},
 		{"zero", 0, false},
 	}
 

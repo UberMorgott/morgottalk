@@ -6,7 +6,6 @@ require (
 	github.com/emersion/go-autostart v0.0.0-20250403115856-34830d6457d2
 	github.com/gen2brain/malgo v0.11.24
 	github.com/google/uuid v1.6.0
-	github.com/robotn/gohook v0.42.3
 	github.com/wailsapp/wails/v3 v3.0.0-alpha.67
 )
 
@@ -42,7 +41,6 @@ require (
 	github.com/samber/lo v1.52.0 // indirect
 	github.com/sergi/go-diff v1.4.0 // indirect
 	github.com/skeema/knownhosts v1.3.2 // indirect
-	github.com/vcaesar/keycode v0.10.1 // indirect
 	github.com/wailsapp/go-webview2 v1.0.23 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
