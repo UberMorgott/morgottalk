@@ -30,7 +30,7 @@
   let downloading: Record<string, number> = {};
   let modelsDir = '';
   let languages: { code: string; name: string }[] = [];
-  let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number }[] = [];
+  let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number; runtimeInstalled: boolean }[] = [];
   let backend = 'auto';
   let appVersion = '';
   let onboardingDone = true; // assume done until loaded (prevents flash)
@@ -86,6 +86,10 @@
   }
 
   onMount(() => {
+    let unsubTranscription: Function;
+    let unsubModelProgress: Function;
+    let unsubHookFailed: Function;
+
     void (async () => {
       try { appVersion = await GetAppVersion(); } catch (e) { console.error('get version failed:', e); }
       await refreshAll();
@@ -133,7 +137,7 @@
         } catch (e) { console.error('polling recording states failed:', e); }
       }, 500);
 
-      const unsubTranscription = Events.On('transcription:progress', (event: any) => {
+      unsubTranscription = Events.On('transcription:progress', (event: any) => {
         const data = event.data?.[0] || event.data || event;
         if (data.presetId && data.total > 1) {
           transcriptionProgress[data.presetId] = `${data.current}/${data.total}`;
@@ -141,7 +145,7 @@
         }
       });
 
-      const unsubModelProgress = Events.On('model:download:progress', (event: any) => {
+      unsubModelProgress = Events.On('model:download:progress', (event: any) => {
         const data = event.data?.[0] || event.data || event;
         if (data.modelName) {
           if (data.done) {
@@ -155,7 +159,7 @@
         }
       });
 
-      const unsubHookFailed = Events.On('hotkey:hook:failed', () => {
+      unsubHookFailed = Events.On('hotkey:hook:failed', () => {
         showDiagnostic('error', t(uiLang, 'hotkey_hook_failed'));
       });
 
@@ -165,9 +169,9 @@
     })();
 
     return () => {
-      unsubTranscription();
-      unsubModelProgress();
-      unsubHookFailed();
+      if (unsubTranscription) unsubTranscription();
+      if (unsubModelProgress) unsubModelProgress();
+      if (unsubHookFailed) unsubHookFailed();
       clearInterval(stateInterval);
       if (sortable) sortable.destroy();
     };
