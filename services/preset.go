@@ -62,6 +62,7 @@ func NewPresetService(history *HistoryService, models *ModelService) *PresetServ
 
 // Init initializes audio and registers hotkeys for enabled presets.
 func (s *PresetService) Init() error {
+	log.Println("PresetService.Init: creating audio capture...")
 	audio, err := NewAudioCapture()
 	if err != nil {
 		return fmt.Errorf("audio init: %w", err)
@@ -71,13 +72,23 @@ func (s *PresetService) Init() error {
 	}
 	s.audio = audio
 
+	log.Println("PresetService.Init: starting hotkey manager...")
 	s.hotkeys = NewHotkeyManager(
 		func(presetID string) { s.onHotkeyPress(presetID) },
 		func(presetID string) { s.onHotkeyRelease(presetID) },
 	)
+	s.hotkeys.SetOnHookStatus(func(ok bool, msg string) {
+		if !ok {
+			log.Printf("PresetService: hook status FAILED: %s", msg)
+			if app := application.Get(); app != nil {
+				app.Event.Emit("hotkey:hook:failed", msg)
+			}
+		}
+	})
 	s.hotkeys.Start()
 
 	// Register hotkeys for enabled presets and preload models if keepModelLoaded
+	log.Printf("PresetService.Init: activating %d presets...", len(s.cfg.Presets))
 	for i := range s.cfg.Presets {
 		p := &s.cfg.Presets[i]
 		s.states[p.ID] = "idle"
@@ -86,6 +97,7 @@ func (s *PresetService) Init() error {
 		}
 	}
 
+	log.Println("PresetService.Init: completed successfully")
 	return nil
 }
 

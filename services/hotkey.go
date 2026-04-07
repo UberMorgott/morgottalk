@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	hook "github.com/robotn/gohook"
 )
@@ -21,6 +22,9 @@ type HotkeyManager struct {
 	// Event loop
 	running bool
 	stop    chan struct{}
+
+	// Hook status callback
+	onHookStatus func(ok bool, msg string)
 
 	// Key capture (for UI)
 	capturing   bool
@@ -40,6 +44,13 @@ func NewHotkeyManager(onPress, onRelease func(presetID string)) *HotkeyManager {
 		onPress:   onPress,
 		onRelease: onRelease,
 	}
+}
+
+// SetOnHookStatus sets a callback for reporting hook installation status.
+func (m *HotkeyManager) SetOnHookStatus(fn func(bool, string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onHookStatus = fn
 }
 
 // Start begins the global keyboard event loop.
@@ -144,14 +155,42 @@ func (m *HotkeyManager) CancelCapture() {
 func (m *HotkeyManager) eventLoop() {
 	evChan := hook.Start()
 	pressedKeys := make(map[uint16]bool)
+	hookConfirmed := false
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	log.Println("HotkeyManager: event loop started, waiting for hook confirmation...")
 
 	for {
 		select {
 		case <-m.stop:
 			return
+		case <-timer.C:
+			if !hookConfirmed {
+				log.Println("ERROR: HotkeyManager: keyboard hook failed to install (no HookEnabled event within 5s)")
+				m.mu.Lock()
+				cb := m.onHookStatus
+				m.mu.Unlock()
+				if cb != nil {
+					cb(false, "keyboard hook failed to install")
+				}
+			}
 		case ev, ok := <-evChan:
 			if !ok {
+				log.Println("HotkeyManager: event channel closed")
 				return
+			}
+			if ev.Kind == hook.HookEnabled {
+				hookConfirmed = true
+				timer.Stop()
+				log.Println("HotkeyManager: keyboard hook installed successfully")
+				m.mu.Lock()
+				cb := m.onHookStatus
+				m.mu.Unlock()
+				if cb != nil {
+					cb(true, "")
+				}
+				continue
 			}
 			switch ev.Kind {
 			case hook.KeyDown:
@@ -171,6 +210,8 @@ func (m *HotkeyManager) eventLoop() {
 func (m *HotkeyManager) handleKeyDown(kc uint16, pressedKeys map[uint16]bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	log.Printf("HotkeyManager: keyDown kc=%d bindings=%d", kc, len(m.active))
 
 	if m.capturing {
 		m.captureKeyDown(kc, pressedKeys)

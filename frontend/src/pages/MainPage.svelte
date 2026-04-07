@@ -155,6 +155,10 @@
         }
       });
 
+      const unsubHookFailed = Events.On('hotkey:hook:failed', () => {
+        showDiagnostic('error', t(uiLang, 'hotkey_hook_failed'));
+      });
+
       // Init SortableJS after DOM renders
       await tick();
       initSortable();
@@ -163,6 +167,7 @@
     return () => {
       unsubTranscription();
       unsubModelProgress();
+      unsubHookFailed();
       clearInterval(stateInterval);
       if (sortable) sortable.destroy();
     };

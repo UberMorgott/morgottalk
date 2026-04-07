@@ -73,6 +73,9 @@ func main() {
 	go func() {
 		if err := presetService.Init(); err != nil {
 			log.Printf("WARNING: preset service init failed: %v", err)
+			if app := application.Get(); app != nil {
+				app.Event.Emit("preset:init:failed", err.Error())
+			}
 		}
 	}()
 
