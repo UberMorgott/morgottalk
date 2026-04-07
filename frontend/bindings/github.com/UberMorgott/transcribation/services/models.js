@@ -93,6 +93,30 @@ export class BackendInfo {
              */
             this["downloadSizeMB"] = 0;
         }
+        if (!("runtimeInstalled" in $$source)) {
+            /**
+             * true if system runtime (CUDA/Vulkan) is present
+             * @member
+             * @type {boolean}
+             */
+            this["runtimeInstalled"] = false;
+        }
+        if (!("driverVersion" in $$source)) {
+            /**
+             * parsed driver version e.g. "560.81", "" if unknown
+             * @member
+             * @type {string}
+             */
+            this["driverVersion"] = "";
+        }
+        if (!("driverOK" in $$source)) {
+            /**
+             * true if driver meets minimum requirements
+             * @member
+             * @type {boolean}
+             */
+            this["driverOK"] = false;
+        }
 
         Object.assign(this, $$source);
     }
@@ -321,6 +345,56 @@ export class ModelInfo {
              * @type {boolean}
              */
             this["downloaded"] = false;
+        }
+        if (!("description" in $$source)) {
+            /**
+             * @member
+             * @type {string}
+             */
+            this["description"] = "";
+        }
+        if (!("languages" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["languages"] = 0;
+        }
+        if (!("speed" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["speed"] = 0;
+        }
+        if (!("quality" in $$source)) {
+            /**
+             * @member
+             * @type {number}
+             */
+            this["quality"] = 0;
+        }
+        if (!("englishOnly" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["englishOnly"] = false;
+        }
+        if (!("translation" in $$source)) {
+            /**
+             * @member
+             * @type {boolean}
+             */
+            this["translation"] = false;
+        }
+        if (!("category" in $$source)) {
+            /**
+             * "fast"/"balanced"/"quality"/""
+             * @member
+             * @type {string}
+             */
+            this["category"] = "";
         }
 
         Object.assign(this, $$source);

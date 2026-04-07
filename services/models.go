@@ -20,11 +20,18 @@ const baseURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
 
 // ModelInfo describes a whisper model.
 type ModelInfo struct {
-	Name       string `json:"name"`
-	FileName   string `json:"fileName"`
-	Size       string `json:"size"`
-	SizeBytes  int64  `json:"sizeBytes"`
-	Downloaded bool   `json:"downloaded"`
+	Name        string `json:"name"`
+	FileName    string `json:"fileName"`
+	Size        string `json:"size"`
+	SizeBytes   int64  `json:"sizeBytes"`
+	Downloaded  bool   `json:"downloaded"`
+	Description string `json:"description"`
+	Languages   int    `json:"languages"`
+	Speed       int    `json:"speed"`
+	Quality     int    `json:"quality"`
+	EnglishOnly bool   `json:"englishOnly"`
+	Translation bool   `json:"translation"`
+	Category    string `json:"category"` // "fast"/"balanced"/"quality"/""
 }
 
 // DownloadProgress is emitted as a Wails event during model download.
@@ -38,41 +45,104 @@ type DownloadProgress struct {
 }
 
 type modelCatalogEntry struct {
-	Name      string
-	SizeBytes int64
-	SizeLabel string
+	Name        string
+	SizeBytes   int64
+	SizeLabel   string
+	Family      string // "tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"
+	Quantized   string // "", "q5_0", "q5_1", "q8_0"
+	EnglishOnly bool
+	Languages   int // number of supported languages (99 for multilingual, 1 for .en)
+	Speed       int // 1-5 rating (5 = fastest)
+	Quality     int // 1-5 rating (5 = best)
+	Translation bool
+	Category    string // "fast", "balanced", "quality" — for onboarding
 }
 
 var catalog = []modelCatalogEntry{
-	{"tiny", 77_700_000, "78 MB"},
-	{"tiny-q5_1", 47_500_000, "48 MB"},
-	{"tiny-q8_0", 42_200_000, "42 MB"},
-	{"tiny.en", 77_700_000, "78 MB"},
-	{"tiny.en-q5_1", 47_500_000, "48 MB"},
-	{"tiny.en-q8_0", 42_200_000, "42 MB"},
-	{"base", 147_500_000, "148 MB"},
-	{"base-q5_1", 57_400_000, "57 MB"},
-	{"base-q8_0", 78_200_000, "78 MB"},
-	{"base.en", 147_500_000, "148 MB"},
-	{"base.en-q5_1", 57_400_000, "57 MB"},
-	{"base.en-q8_0", 78_200_000, "78 MB"},
-	{"small", 488_000_000, "488 MB"},
-	{"small-q5_1", 190_000_000, "190 MB"},
-	{"small-q8_0", 259_000_000, "259 MB"},
-	{"small.en", 488_000_000, "488 MB"},
-	{"small.en-q5_1", 190_000_000, "190 MB"},
-	{"small.en-q8_0", 259_000_000, "259 MB"},
-	{"medium", 1_533_000_000, "1.5 GB"},
-	{"medium-q5_0", 539_000_000, "539 MB"},
-	{"medium-q8_0", 812_000_000, "812 MB"},
-	{"medium.en", 1_533_000_000, "1.5 GB"},
-	{"medium.en-q5_0", 539_000_000, "539 MB"},
-	{"medium.en-q8_0", 812_000_000, "812 MB"},
-	{"large-v3", 3_094_000_000, "3.1 GB"},
-	{"large-v3-q5_0", 1_080_000_000, "1.1 GB"},
-	{"large-v3-turbo", 1_623_000_000, "1.6 GB"},
-	{"large-v3-turbo-q5_0", 574_000_000, "574 MB"},
-	{"large-v3-turbo-q8_0", 862_000_000, "862 MB"},
+	// tiny family: Speed 5, Quality 1
+	{Name: "tiny", SizeBytes: 77_700_000, SizeLabel: "78 MB", Family: "tiny", Speed: 5, Quality: 1, Languages: 99, Translation: true},
+	{Name: "tiny-q5_1", SizeBytes: 47_500_000, SizeLabel: "48 MB", Family: "tiny", Quantized: "q5_1", Speed: 5, Quality: 1, Languages: 99, Translation: true, Category: "fast"},
+	{Name: "tiny-q8_0", SizeBytes: 42_200_000, SizeLabel: "42 MB", Family: "tiny", Quantized: "q8_0", Speed: 5, Quality: 1, Languages: 99, Translation: true},
+	{Name: "tiny.en", SizeBytes: 77_700_000, SizeLabel: "78 MB", Family: "tiny", EnglishOnly: true, Speed: 5, Quality: 1, Languages: 1},
+	{Name: "tiny.en-q5_1", SizeBytes: 47_500_000, SizeLabel: "48 MB", Family: "tiny", Quantized: "q5_1", EnglishOnly: true, Speed: 5, Quality: 1, Languages: 1},
+	{Name: "tiny.en-q8_0", SizeBytes: 42_200_000, SizeLabel: "42 MB", Family: "tiny", Quantized: "q8_0", EnglishOnly: true, Speed: 5, Quality: 1, Languages: 1},
+	// base family: Speed 4, Quality 2
+	{Name: "base", SizeBytes: 147_500_000, SizeLabel: "148 MB", Family: "base", Speed: 4, Quality: 2, Languages: 99, Translation: true},
+	{Name: "base-q5_1", SizeBytes: 57_400_000, SizeLabel: "57 MB", Family: "base", Quantized: "q5_1", Speed: 4, Quality: 2, Languages: 99, Translation: true, Category: "balanced"},
+	{Name: "base-q8_0", SizeBytes: 78_200_000, SizeLabel: "78 MB", Family: "base", Quantized: "q8_0", Speed: 4, Quality: 2, Languages: 99, Translation: true},
+	{Name: "base.en", SizeBytes: 147_500_000, SizeLabel: "148 MB", Family: "base", EnglishOnly: true, Speed: 4, Quality: 2, Languages: 1},
+	{Name: "base.en-q5_1", SizeBytes: 57_400_000, SizeLabel: "57 MB", Family: "base", Quantized: "q5_1", EnglishOnly: true, Speed: 4, Quality: 2, Languages: 1},
+	{Name: "base.en-q8_0", SizeBytes: 78_200_000, SizeLabel: "78 MB", Family: "base", Quantized: "q8_0", EnglishOnly: true, Speed: 4, Quality: 2, Languages: 1},
+	// small family: Speed 3, Quality 3
+	{Name: "small", SizeBytes: 488_000_000, SizeLabel: "488 MB", Family: "small", Speed: 3, Quality: 3, Languages: 99, Translation: true},
+	{Name: "small-q5_1", SizeBytes: 190_000_000, SizeLabel: "190 MB", Family: "small", Quantized: "q5_1", Speed: 3, Quality: 3, Languages: 99, Translation: true},
+	{Name: "small-q8_0", SizeBytes: 259_000_000, SizeLabel: "259 MB", Family: "small", Quantized: "q8_0", Speed: 3, Quality: 3, Languages: 99, Translation: true},
+	{Name: "small.en", SizeBytes: 488_000_000, SizeLabel: "488 MB", Family: "small", EnglishOnly: true, Speed: 3, Quality: 3, Languages: 1},
+	{Name: "small.en-q5_1", SizeBytes: 190_000_000, SizeLabel: "190 MB", Family: "small", Quantized: "q5_1", EnglishOnly: true, Speed: 3, Quality: 3, Languages: 1},
+	{Name: "small.en-q8_0", SizeBytes: 259_000_000, SizeLabel: "259 MB", Family: "small", Quantized: "q8_0", EnglishOnly: true, Speed: 3, Quality: 3, Languages: 1},
+	// medium family: Speed 2, Quality 4
+	{Name: "medium", SizeBytes: 1_533_000_000, SizeLabel: "1.5 GB", Family: "medium", Speed: 2, Quality: 4, Languages: 99, Translation: true},
+	{Name: "medium-q5_0", SizeBytes: 539_000_000, SizeLabel: "539 MB", Family: "medium", Quantized: "q5_0", Speed: 2, Quality: 4, Languages: 99, Translation: true},
+	{Name: "medium-q8_0", SizeBytes: 812_000_000, SizeLabel: "812 MB", Family: "medium", Quantized: "q8_0", Speed: 2, Quality: 4, Languages: 99, Translation: true},
+	{Name: "medium.en", SizeBytes: 1_533_000_000, SizeLabel: "1.5 GB", Family: "medium", EnglishOnly: true, Speed: 2, Quality: 4, Languages: 1},
+	{Name: "medium.en-q5_0", SizeBytes: 539_000_000, SizeLabel: "539 MB", Family: "medium", Quantized: "q5_0", EnglishOnly: true, Speed: 2, Quality: 4, Languages: 1},
+	{Name: "medium.en-q8_0", SizeBytes: 812_000_000, SizeLabel: "812 MB", Family: "medium", Quantized: "q8_0", EnglishOnly: true, Speed: 2, Quality: 4, Languages: 1},
+	// large-v3: Speed 1, Quality 5
+	{Name: "large-v3", SizeBytes: 3_094_000_000, SizeLabel: "3.1 GB", Family: "large-v3", Speed: 1, Quality: 5, Languages: 99, Translation: true},
+	{Name: "large-v3-q5_0", SizeBytes: 1_080_000_000, SizeLabel: "1.1 GB", Family: "large-v3", Quantized: "q5_0", Speed: 1, Quality: 5, Languages: 99, Translation: true},
+	// large-v3-turbo: Speed 3, Quality 5
+	{Name: "large-v3-turbo", SizeBytes: 1_623_000_000, SizeLabel: "1.6 GB", Family: "large-v3-turbo", Speed: 3, Quality: 5, Languages: 99, Translation: true},
+	{Name: "large-v3-turbo-q5_0", SizeBytes: 574_000_000, SizeLabel: "574 MB", Family: "large-v3-turbo", Quantized: "q5_0", Speed: 3, Quality: 5, Languages: 99, Translation: true, Category: "quality"},
+	{Name: "large-v3-turbo-q8_0", SizeBytes: 862_000_000, SizeLabel: "862 MB", Family: "large-v3-turbo", Quantized: "q8_0", Speed: 3, Quality: 5, Languages: 99, Translation: true},
+}
+
+// modelDescription generates a human-readable description from catalog metadata.
+func modelDescription(e modelCatalogEntry) string {
+	stars := func(n int) string {
+		s := ""
+		for i := 0; i < 5; i++ {
+			if i < n {
+				s += "\u2605" // ★
+			} else {
+				s += "\u2606" // ☆
+			}
+		}
+		return s
+	}
+
+	desc := fmt.Sprintf("Speed: %s | Quality: %s", stars(e.Speed), stars(e.Quality))
+
+	if e.EnglishOnly {
+		desc += " | English only"
+	} else {
+		desc += fmt.Sprintf(" | %d languages", e.Languages)
+	}
+
+	if e.Translation {
+		desc += " | Translation \u2713"
+	}
+
+	// Use case hint based on family
+	switch e.Family {
+	case "tiny":
+		desc += " \u2014 Fastest option, works on CPU"
+	case "base":
+		desc += " \u2014 Good balance for simple dictation"
+	case "small":
+		desc += " \u2014 Balanced speed and quality"
+	case "medium":
+		desc += " \u2014 High quality, slower"
+	case "large-v3":
+		desc += " \u2014 Best quality, slowest"
+	case "large-v3-turbo":
+		desc += " \u2014 Near-best quality, 4x faster than large"
+	}
+
+	if e.Quantized != "" {
+		desc += fmt.Sprintf(" (%s quantized)", e.Quantized)
+	}
+
+	return desc
 }
 
 func isValidModelName(name string) bool {
@@ -108,11 +178,18 @@ func (s *ModelService) GetAvailableModels() []ModelInfo {
 			downloaded = true
 		}
 		models = append(models, ModelInfo{
-			Name:       c.Name,
-			FileName:   fileName,
-			Size:       c.SizeLabel,
-			SizeBytes:  c.SizeBytes,
-			Downloaded: downloaded,
+			Name:        c.Name,
+			FileName:    fileName,
+			Size:        c.SizeLabel,
+			SizeBytes:   c.SizeBytes,
+			Downloaded:  downloaded,
+			Description: modelDescription(c),
+			Languages:   c.Languages,
+			Speed:       c.Speed,
+			Quality:     c.Quality,
+			EnglishOnly: c.EnglishOnly,
+			Translation: c.Translation,
+			Category:    c.Category,
 		})
 	}
 	return models

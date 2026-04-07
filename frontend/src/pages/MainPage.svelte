@@ -26,7 +26,7 @@
   let states: Record<string, string> = {}; // id -> "idle"/"recording"/"processing"
   let microphoneId = '';
   let microphones: { id: string; name: string; isDefault: boolean }[] = [];
-  let models: { name: string; fileName: string; size: string; sizeBytes: number; downloaded: boolean }[] = [];
+  let models: { name: string; fileName: string; size: string; sizeBytes: number; downloaded: boolean; description: string; languages: number; speed: number; quality: number; englishOnly: boolean; translation: boolean; category: string }[] = [];
   let downloading: Record<string, number> = {};
   let modelsDir = '';
   let languages: { code: string; name: string }[] = [];

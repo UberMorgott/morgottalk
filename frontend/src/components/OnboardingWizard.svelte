@@ -8,7 +8,7 @@
 
   export let microphones: { id: string; name: string; isDefault: boolean }[] = [];
   export let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number; runtimeInstalled: boolean }[] = [];
-  export let models: { name: string; fileName: string; size: string; sizeBytes: number; downloaded: boolean }[] = [];
+  export let models: { name: string; fileName: string; size: string; sizeBytes: number; downloaded: boolean; description: string; languages: number; speed: number; quality: number; englishOnly: boolean; translation: boolean; category: string }[] = [];
   export let settings: { microphoneId: string; modelsDir: string; theme: string; uiLang: string; closeAction: string; autoStart: boolean; startMinimized: boolean; backend: string; onboardingDone: boolean };
 
   const dispatch = createEventDispatcher<{
@@ -58,7 +58,7 @@
   ];
 
   $: downloadedModels = models.filter(m => m.downloaded);
-  $: recommendedModels = models.filter(m => !m.downloaded).slice(0, 3); // Show first 3 non-downloaded models
+  $: recommendedModels = models.filter(m => m.category && !m.downloaded);
 
   // Auto-select first downloaded model
   $: if (downloadedModels.length > 0 && !selectedModel) {
@@ -396,15 +396,33 @@
                   : `${downloadedModels.length} ${t(uiLang, 'onboarding_models_ready')}`}
               </span>
             </div>
-          {:else}
+          {/if}
+          {#if recommendedModels.length === 0 && downloadedModels.length > 0}
+            <div class="model-ready">
+              <span class="model-ready-icon">{@html iconSvg.check}</span>
+              <span class="model-ready-text">{t(uiLang, 'onboarding_models_all_ready')}</span>
+            </div>
+          {:else if recommendedModels.length > 0}
             <p class="section-note">{t(uiLang, 'onboarding_model_explain')}</p>
             <div class="model-list">
               {#each recommendedModels as m (m.name)}
                 {@const mState = getModelState(m.name)}
                 <div class="model-item">
                   <div class="model-item-info">
-                    <span class="model-item-name">{m.name}</span>
-                    <span class="model-item-size">{m.size}</span>
+                    <div class="model-item-top">
+                      <span class="model-item-name">{m.name}</span>
+                      {#if m.category === 'fast'}
+                        <span class="model-cat-badge cat-fast">&#9889; Fast</span>
+                      {:else if m.category === 'balanced'}
+                        <span class="model-cat-badge cat-balanced">&#9878; Balanced</span>
+                      {:else if m.category === 'quality'}
+                        <span class="model-cat-badge cat-quality">&#128081; Best</span>
+                      {/if}
+                      <span class="model-item-size">{m.size}</span>
+                    </div>
+                    {#if m.description}
+                      <span class="model-item-desc">{m.description}</span>
+                    {/if}
                   </div>
                   {#if mState.status === 'downloading'}
                     <div class="model-item-progress">
@@ -777,9 +795,22 @@
     border: 1px solid var(--border-color);
     gap: 8px;
   }
-  .model-item-info { display: flex; flex-direction: column; gap: 1px; flex: 1; min-width: 0; }
+  .model-item-info { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+  .model-item-top { display: flex; align-items: center; gap: 6px; }
   .model-item-name { font-size: 13px; color: var(--text-primary); font-weight: 500; }
   .model-item-size { font-size: 11px; color: var(--text-tertiary); }
+  .model-item-desc {
+    font-size: 10px; color: var(--text-muted); line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .model-cat-badge {
+    font-size: 9px; padding: 1px 6px; border-radius: 4px;
+    font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
+    flex-shrink: 0; white-space: nowrap;
+  }
+  .cat-fast { color: #34d399; background: rgba(52, 211, 153, 0.12); }
+  .cat-balanced { color: #60a5fa; background: rgba(96, 165, 250, 0.12); }
+  .cat-quality { color: #fbbf24; background: rgba(251, 191, 36, 0.12); }
 
   .model-item-progress { display: flex; align-items: center; gap: 8px; flex-shrink: 0; width: 120px; }
   .mini-bar { flex: 1; height: 4px; background: var(--border-subtle, rgba(255,255,255,.07)); border-radius: 2px; overflow: hidden; }

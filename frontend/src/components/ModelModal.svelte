@@ -4,7 +4,7 @@
   import type { Lang } from '../lib/i18n';
   import ProgressBar from './ProgressBar.svelte';
 
-  export let models: { name: string; fileName: string; size: string; sizeBytes: number; downloaded: boolean }[] = [];
+  export let models: { name: string; fileName: string; size: string; sizeBytes: number; downloaded: boolean; description: string; languages: number; speed: number; quality: number; englishOnly: boolean; translation: boolean; category: string }[] = [];
   export let downloading: Record<string, number> = {};
   export let modelsDir: string = '';
   export let lang: Lang = 'en';
@@ -45,11 +45,16 @@
       {#each models as model (model.name)}
         <div class="model-row" class:model-downloaded={model.downloaded}>
           <div class="model-info">
-            <span class="model-name">{model.name}</span>
-            {#if model.downloaded}
-              <span class="model-badge">{t(lang, 'downloaded')}</span>
+            <div class="model-top-row">
+              <span class="model-name">{model.name}</span>
+              {#if model.downloaded}
+                <span class="model-badge">{t(lang, 'downloaded')}</span>
+              {/if}
+              <span class="model-size">{model.size}</span>
+            </div>
+            {#if model.description}
+              <div class="model-desc">{model.description}</div>
             {/if}
-            <span class="model-size">{model.size}</span>
           </div>
 
           {#if downloading[model.name] !== undefined}
@@ -149,7 +154,12 @@
   }
   .model-downloaded { border-color: var(--border-color); }
 
-  .model-info { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; }
+  .model-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+  .model-top-row { display: flex; align-items: center; gap: 8px; }
+  .model-desc {
+    font-size: 10px; color: var(--text-muted); line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
   .model-name {
     font-size: 13px; color: var(--text-primary); font-family: ui-monospace, monospace;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
