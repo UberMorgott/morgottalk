@@ -16,12 +16,16 @@ func showOverlay(state string) {
 		return
 	}
 
+	// Save the foreground window so we can restore focus after showing the overlay.
+	saved := saveForegroundWindow()
+
 	// If overlay already exists, emit state event and show it.
 	if w, exists := app.Window.GetByName("overlay"); exists {
 		app.Event.Emit("overlay:state", map[string]any{"state": state})
 		if !w.IsVisible() {
 			w.Show()
 		}
+		restoreForegroundWindow(saved)
 		return
 	}
 
@@ -35,7 +39,7 @@ func showOverlay(state string) {
 		AlwaysOnTop:       true,
 		BackgroundType:    application.BackgroundTypeTransparent,
 		IgnoreMouseEvents: true,
-		Hidden:            false,
+		Hidden:            true,
 		DisableResize:     true,
 		URL:               "/?window=overlay&state=" + state,
 		Windows: application.WindowsWindow{
@@ -44,6 +48,8 @@ func showOverlay(state string) {
 		},
 	})
 	w.Center()
+	w.Show()
+	restoreForegroundWindow(saved)
 }
 
 // hideOverlay hides the overlay window.

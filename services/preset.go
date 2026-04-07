@@ -506,6 +506,10 @@ func (s *PresetService) StopRecording(presetID string) (TranscriptionResult, err
 		result = ""
 	}
 
+	// Hide overlay BEFORE pasting so the target app has focus.
+	hideOverlay()
+	time.Sleep(100 * time.Millisecond) // let OS process focus change
+
 	if result != "" {
 		// Paste into active text field
 		if err := pasteText(result); err != nil {
@@ -528,8 +532,6 @@ func (s *PresetService) StopRecording(presetID string) (TranscriptionResult, err
 	s.states[presetID] = "idle"
 	s.lastText = result
 	s.mu.Unlock()
-
-	hideOverlay()
 	return TranscriptionResult{Text: result}, nil
 }
 

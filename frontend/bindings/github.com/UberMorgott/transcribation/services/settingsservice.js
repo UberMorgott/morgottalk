@@ -26,6 +26,14 @@ export function GetAllBackends() {
 }
 
 /**
+ * GetAppVersion returns the application version string.
+ * @returns {$CancellablePromise<string>}
+ */
+export function GetAppVersion() {
+    return $Call.ByID(2896710214);
+}
+
+/**
  * GetGlobalSettings returns the global (non-preset) settings.
  * @returns {$CancellablePromise<$models.GlobalSettings>}
  */

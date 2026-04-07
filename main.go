@@ -16,7 +16,7 @@ import (
 	"github.com/UberMorgott/transcribation/services"
 )
 
-const AppVersion = "1.1.0"
+const AppVersion = "1.2.0"
 
 //go:embed all:frontend/dist
 var assets embed.FS
@@ -43,6 +43,8 @@ func main() {
 	if logFile := initLog(); logFile != nil {
 		defer logFile.Close()
 	}
+	services.AppVersion = AppVersion
+
 	historyService := services.NewHistoryService()
 	modelService := services.NewModelService()
 	presetService := services.NewPresetService(historyService, modelService)

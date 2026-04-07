@@ -102,34 +102,20 @@ func pasteTextDarwin(text string) error {
 }
 
 func pasteTextWindows(text string) error {
-	// Save clipboard
-	saved, hadClipboard := winClipRead()
-
-	// Write to clipboard via Win32 API (instant, no process spawning)
-	if err := winClipWrite(text); err != nil {
-		return fmt.Errorf("clipboard write failed: %w", err)
-	}
-
-	time.Sleep(50 * time.Millisecond)
-
-	// Simulate Ctrl+V via SendInput (kernel-level, goes to focused window)
-	if err := winSendCtrlV(); err != nil {
+	// Type text directly via SendInput with KEYEVENTF_UNICODE.
+	// This bypasses clipboard and keyboard layout, working in all apps
+	// including Windows Terminal and PowerShell.
+	if err := winTypeUnicode(text); err != nil {
 		// SendInput blocked (UIPI: target window is elevated).
-		// Text is already in clipboard — user can Ctrl+V manually.
-		log.Printf("SendInput blocked (target may be elevated), text left in clipboard: %v", err)
+		// Fall back to clipboard — user can Ctrl+V manually.
+		log.Printf("SendInput blocked, falling back to clipboard: %v", err)
+		if clipErr := winClipWrite(text); clipErr != nil {
+			return fmt.Errorf("both SendInput and clipboard failed: %v; %v", err, clipErr)
+		}
 		return nil
 	}
 
-	log.Printf("Text pasted via clipboard (%d chars)", len(text))
-
-	// Restore original clipboard after delay
-	if hadClipboard {
-		go func() {
-			time.Sleep(500 * time.Millisecond)
-			_ = winClipWrite(saved)
-		}()
-	}
-
+	log.Printf("Text typed via Unicode input (%d chars)", len(text))
 	return nil
 }
 

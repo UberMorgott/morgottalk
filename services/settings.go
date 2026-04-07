@@ -49,6 +49,9 @@ var onBackendChanged func()
 // Use to flush engine caches and reload config in PresetService.
 func SetOnBackendChanged(fn func()) { onBackendChanged = fn }
 
+// AppVersion is set by main.go at startup.
+var AppVersion string
+
 // SettingsService provides global settings management to the frontend.
 type SettingsService struct {
 	models *ModelService
@@ -56,6 +59,11 @@ type SettingsService struct {
 
 func NewSettingsService(models *ModelService) *SettingsService {
 	return &SettingsService{models: models}
+}
+
+// GetAppVersion returns the application version string.
+func (s *SettingsService) GetAppVersion() string {
+	return AppVersion
 }
 
 // GetGlobalSettings returns the global (non-preset) settings.

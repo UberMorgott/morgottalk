@@ -3,7 +3,7 @@
   import Sortable from 'sortablejs';
   import { Events } from '@wailsio/runtime';
   import { GetPresets, CreatePreset, UpdatePreset, DeletePreset, SetPresetEnabled, StartRecording, StopRecording, GetRecordingStates, GetModelLanguages, ReorderPresets } from '../../bindings/github.com/UberMorgott/transcribation/services/presetservice.js';
-  import { GetGlobalSettings, GetMicrophones, GetAllBackends, GetSystemInfo } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
+  import { GetGlobalSettings, GetMicrophones, GetAllBackends, GetSystemInfo, GetAppVersion } from '../../bindings/github.com/UberMorgott/transcribation/services/settingsservice.js';
   import { GetAvailableModels, DownloadModel, DeleteModel, GetModelsDir, CancelDownload } from '../../bindings/github.com/UberMorgott/transcribation/services/modelservice.js';
   import { OpenHistoryWindow } from '../../bindings/github.com/UberMorgott/transcribation/services/historyservice.js';
   import { t } from '../lib/i18n';
@@ -32,6 +32,7 @@
   let languages: { code: string; name: string }[] = [];
   let backends: { id: string; name: string; compiled: boolean; systemAvailable: boolean; canInstall: boolean; installHint: string; unavailableReason: string; gpuDetected: string; recommended: boolean; downloadSizeMB: number }[] = [];
   let backend = 'auto';
+  let appVersion = '';
   let onboardingDone = true; // assume done until loaded (prevents flash)
 
   // Theme — read localStorage synchronously, apply immediately to prevent flash
@@ -86,6 +87,7 @@
 
   onMount(() => {
     void (async () => {
+      try { appVersion = await GetAppVersion(); } catch (e) { console.error('get version failed:', e); }
       await refreshAll();
 
       // First-run diagnostics
@@ -389,7 +391,7 @@
       <div class="topbar-spacer"></div>
       <div class="app-title" style="--wails-draggable: no-drag">
         <span class="app-name">Morgo<span class="app-tt">TT</span>alk</span>
-        <span class="app-version">v0.3.0</span>
+        <span class="app-version">{appVersion ? `v${appVersion}` : ''}</span>
       </div>
       <div class="topbar-spacer"></div>
       <button class="topbar-btn" on:click={() => OpenHistoryWindow()} style="--wails-draggable: no-drag" title={t(uiLang, 'tip_history')}>

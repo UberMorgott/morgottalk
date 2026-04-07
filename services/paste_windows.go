@@ -5,6 +5,7 @@ package services
 import (
 	"fmt"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
@@ -18,6 +19,7 @@ var (
 	pSetClipboardData = user32.NewProc("SetClipboardData")
 	pGetClipboardData = user32.NewProc("GetClipboardData")
 	pSendInput        = user32.NewProc("SendInput")
+	pMapVirtualKey    = user32.NewProc("MapVirtualKeyW")
 
 	pGlobalAlloc  = kern32.NewProc("GlobalAlloc")
 	pGlobalLock   = kern32.NewProc("GlobalLock")
@@ -106,29 +108,58 @@ type keyInput struct {
 	_pad      [8]byte // pad union to MOUSEINPUT size
 }
 
-// winSendCtrlV simulates Ctrl+V using SendInput (kernel-level, instant).
-func winSendCtrlV() error {
+const mapvkVkToVsc = 0
+
+func vkToScan(vk uint16) uint16 {
+	ret, _, _ := pMapVirtualKey.Call(uintptr(vk), mapvkVkToVsc)
+	return uint16(ret)
+}
+
+// winTypeUnicode types text directly via SendInput with KEYEVENTF_UNICODE.
+// Each character is sent as a Unicode event, bypassing keyboard layout entirely.
+// Works in all applications including Windows Terminal and PowerShell.
+// Long texts are sent in chunks to avoid overwhelming the target application.
+func winTypeUnicode(text string) error {
 	const (
-		inputKeyboard = 1
-		keyUp         = 0x0002
-		vkControl     = 0x11
-		vkV           = 0x56
+		inputKeyboard    = 1
+		keyeventfUnicode = 0x0004
+		keyeventfKeyUp   = 0x0002
+		chunkSize        = 50 // characters per SendInput batch
 	)
 
-	inputs := [4]keyInput{
-		{inputType: inputKeyboard, wVk: vkControl},
-		{inputType: inputKeyboard, wVk: vkV},
-		{inputType: inputKeyboard, wVk: vkV, dwFlags: keyUp},
-		{inputType: inputKeyboard, wVk: vkControl, dwFlags: keyUp},
+	runes := []rune(text)
+	if len(runes) == 0 {
+		return nil
 	}
 
-	ret, _, err := pSendInput.Call(
-		4,
-		uintptr(unsafe.Pointer(&inputs[0])),
-		uintptr(unsafe.Sizeof(inputs[0])),
-	)
-	if ret != 4 {
-		return fmt.Errorf("SendInput: %v", err)
+	for i := 0; i < len(runes); i += chunkSize {
+		end := i + chunkSize
+		if end > len(runes) {
+			end = len(runes)
+		}
+		chunk := runes[i:end]
+
+		inputs := make([]keyInput, 0, len(chunk)*2)
+		for _, r := range chunk {
+			inputs = append(inputs,
+				keyInput{inputType: inputKeyboard, wScan: uint16(r), dwFlags: keyeventfUnicode},
+				keyInput{inputType: inputKeyboard, wScan: uint16(r), dwFlags: keyeventfUnicode | keyeventfKeyUp},
+			)
+		}
+
+		ret, _, err := pSendInput.Call(
+			uintptr(len(inputs)),
+			uintptr(unsafe.Pointer(&inputs[0])),
+			uintptr(unsafe.Sizeof(inputs[0])),
+		)
+		if ret != uintptr(len(inputs)) {
+			return fmt.Errorf("SendInput: sent %d/%d events at offset %d: %v", ret, len(inputs), i, err)
+		}
+
+		// Small delay between chunks to let the target app process input
+		if end < len(runes) {
+			time.Sleep(5 * time.Millisecond)
+		}
 	}
 	return nil
 }

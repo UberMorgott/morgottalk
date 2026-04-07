@@ -36,7 +36,7 @@ export function CaptureHotkey() {
 }
 
 /**
- * CreatePreset adds a new preset and saves config.
+ * CreatePreset adds a new preset, saves config, and registers hotkey if enabled.
  * @param {config$0.Preset} p
  * @returns {$CancellablePromise<config$0.Preset>}
  */
@@ -111,6 +111,15 @@ export function GetRecordingStates() {
  */
 export function Init() {
     return $Call.ByID(1658348945);
+}
+
+/**
+ * ReloadConfig reloads configuration from disk and updates in-memory state.
+ * Call after external changes (e.g. backend changed via Settings UI).
+ * @returns {$CancellablePromise<void>}
+ */
+export function ReloadConfig() {
+    return $Call.ByID(3427399112);
 }
 
 /**
